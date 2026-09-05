@@ -1,0 +1,31 @@
+# dependencies
+node_modules/
+
+# Next.js build output
+.next/
+out/
+.vite/
+
+# local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# logs and coverage
+*.log
+coverage/
+
+# local databases and generated files
+*.db
+*.db-journal
+prisma/dev.db*
+tsconfig.tsbuildinfo
+
+# editor and operating-system files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# local archives and deployment artifacts
+*.zip

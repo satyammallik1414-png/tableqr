@@ -1,0 +1,674 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  MANAGER
+  KITCHEN
+  CASHIER
+  WAITER
+}
+
+enum OrderStatus {
+  PENDING
+  RECEIVED
+  PREPARING
+  READY
+  SERVED
+  COMPLETED
+  CANCELLED
+}
+
+enum QRType {
+  RESTAURANT_MENU
+  TABLE
+}
+
+enum OrderType {
+  DINE_IN
+  TAKEAWAY
+  DELIVERY
+}
+
+enum TableStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+  CLEANING
+}
+
+enum PaymentMethod {
+  CASH
+  UPI
+  CREDIT_CARD
+  DEBIT_CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REFUNDED
+}
+
+enum BusinessStatus {
+  ACTIVE
+  SUSPENDED
+  TRIAL
+  EXPIRED
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  PAST_DUE
+  EXPIRED
+  CANCELLED
+}
+
+enum BillingCycle {
+  MONTHLY
+  YEARLY
+}
+
+enum InvoiceStatus {
+  PAID
+  UNPAID
+  OVERDUE
+  CANCELLED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  name         String
+  email        String     @unique
+  passwordHash String
+  role         UserRole   @default(WAITER)
+  phone        String?
+  image        String?
+  isActive     Boolean    @default(true)
+  restaurantId String?
+  branchId     String?
+  restaurant   Restaurant? @relation(fields: [restaurantId], references: [id])
+  branch       Branch?    @relation(fields: [branchId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  managedBranch Branch?          @relation("BranchManager")
+  notifications Notification[]
+  payments      Payment[]
+  bills         Bill[]
+  orders        Order[]
+  featureOverrides UserFeatureOverride[]
+
+  @@index([restaurantId])
+  @@index([branchId])
+  @@index([role])
+  @@map("users")
+}
+
+model Restaurant {
+  id          String         @id @default(cuid())
+  name        String
+  slug        String         @unique
+  logo        String?
+  address     String?
+  phone       String?
+  email       String?
+  gstNumber   String?
+  currency    String         @default("INR")
+  timezone    String         @default("Asia/Kolkata")
+  status      BusinessStatus @default(ACTIVE)
+  ownerName   String?
+  ownerEmail  String?
+  ownerPhone  String?
+  maxBranches Int?
+  maxStaff    Int?
+  maxCustomers Int?
+  maxOrders   Int?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+
+  users         User[]
+  branches      Branch[]
+  customers     Customer[]
+  tiers         LoyaltyTier[]
+  coupons       Coupon[]
+  settings      Settings[]
+  subscriptions Subscription[]
+  invoices      Invoice[]
+  auditLogs     AuditLog[]
+  payments      Payment[]
+  featureOverrides BusinessFeatureOverride[]
+  qrCodes       RestaurantQRCode[]
+
+  @@map("restaurants")
+}
+
+model Branch {
+  id           String   @id @default(cuid())
+  restaurantId String
+  name         String
+  address      String?
+  phone        String?
+  managerId    String?  @unique
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  restaurant    Restaurant @relation(fields: [restaurantId], references: [id])
+  manager       User?      @relation("BranchManager", fields: [managerId], references: [id])
+  users         User[]
+  tables        Table[]
+  categories    Category[]
+  orders        Order[]
+  notifications Notification[]
+  inventory     Inventory[]
+  qrCodes       RestaurantQRCode[]
+
+  @@index([restaurantId])
+  @@map("branches")
+}
+
+model Table {
+  id            String      @id @default(cuid())
+  branchId      String
+  tableNumber   Int
+  capacity      Int         @default(4)
+  status        TableStatus @default(AVAILABLE)
+  qrCode        String?
+  qrImage       String?
+  isActive      Boolean     @default(true)
+  currentOrderId String?
+  createdAt     DateTime    @default(now())
+
+  branch Branch  @relation(fields: [branchId], references: [id])
+  orders Order[]
+  qrCodes RestaurantQRCode[]
+
+  @@unique([branchId, tableNumber])
+  @@index([branchId])
+  @@map("tables")
+}
+
+model Category {
+  id        String   @id @default(cuid())
+  branchId  String
+  name      String
+  image     String?
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  branch    Branch     @relation(fields: [branchId], references: [id])
+  menuItems MenuItem[]
+
+  @@unique([branchId, name])
+  @@index([branchId])
+  @@map("categories")
+}
+
+model MenuItem {
+  id              String   @id @default(cuid())
+  categoryId      String
+  name            String
+  description     String?
+  image           String?
+  price           Float
+  preparationTime Int?
+  isVeg           Boolean  @default(true)
+  isAvailable     Boolean  @default(true)
+  isFeatured      Boolean  @default(false)
+  isTrending      Boolean  @default(false)
+  isRecommended   Boolean  @default(false)
+  variants        Json?
+  addons          Json?
+  sortOrder       Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  category   Category     @relation(fields: [categoryId], references: [id])
+  orderItems OrderItem[]
+
+  @@index([categoryId])
+  @@index([isAvailable])
+  @@map("menu_items")
+}
+
+model Order {
+  id            String      @id @default(cuid())
+  tableId       String?
+  branchId      String
+  customerId    String?
+  status        OrderStatus @default(RECEIVED)
+  items         Json
+  subtotal      Float       @default(0)
+  tax           Float       @default(0)
+  serviceCharge Float       @default(0)
+  discount      Float       @default(0)
+  total         Float       @default(0)
+  notes         String?
+  couponCode    String?
+  priority      Boolean     @default(false)
+  qrCodeId      String?
+  orderNumber   String?     @unique
+  orderType     OrderType   @default(DINE_IN)
+  submittedAt   DateTime    @default(now())
+  acceptedAt    DateTime?
+  estimatedReadyMinutes Int?
+  estimatedReadyAt DateTime?
+  cancelledAt   DateTime?
+  lastUpdatedAt DateTime    @default(now())
+  cancellationReason String?
+  idempotencyKey String?    @unique
+  customerName  String?
+  customerPhone String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  table         Table?              @relation(fields: [tableId], references: [id])
+  branch        Branch              @relation(fields: [branchId], references: [id])
+  customer      Customer?           @relation(fields: [customerId], references: [id])
+  createdBy     User?               @relation(fields: [createdById], references: [id])
+  createdById   String?
+  qrCode        RestaurantQRCode?   @relation(fields: [qrCodeId], references: [id])
+  statusHistory OrderStatusHistory[]
+  orderItems    OrderItem[]
+  bills         Bill[]
+
+  @@index([branchId])
+  @@index([tableId])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([qrCodeId])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model OrderItem {
+  id         String       @id @default(cuid())
+  orderId    String
+  menuItemId String
+  quantity   Int          @default(1)
+  price      Float
+  variants   Json?
+  addons     Json?
+  notes      String?
+  status     OrderStatus  @default(RECEIVED)
+  createdAt  DateTime     @default(now())
+
+  order    Order    @relation(fields: [orderId], references: [id])
+  menuItem MenuItem @relation(fields: [menuItemId], references: [id])
+
+  @@map("order_items")
+}
+
+model Bill {
+  id            String        @id @default(cuid())
+  orderId       String
+  billNumber    String        @unique
+  subtotal      Float         @default(0)
+  taxAmount     Float         @default(0)
+  serviceCharge Float         @default(0)
+  discount      Float         @default(0)
+  total         Float         @default(0)
+  paymentMethod PaymentMethod @default(CASH)
+  paymentStatus PaymentStatus @default(PENDING)
+  splitCount    Int           @default(1)
+  notes         String?
+  paidAt        DateTime?
+  generatedById String?
+  createdAt     DateTime      @default(now())
+
+  order     Order @relation(fields: [orderId], references: [id])
+  generatedBy User? @relation(fields: [generatedById], references: [id])
+  payments  Payment[]
+
+  @@index([orderId])
+  @@index([paymentStatus])
+  @@map("bills")
+}
+
+model Payment {
+  id            String        @id @default(cuid())
+  billId        String?
+  invoiceId     String?
+  restaurantId  String?
+  method        PaymentMethod @default(CASH)
+  amount        Float
+  reference     String?
+  status        PaymentStatus @default(PENDING)
+  processedById String?
+  createdAt     DateTime      @default(now())
+
+  bill        Bill?       @relation(fields: [billId], references: [id])
+  invoice     Invoice?    @relation(fields: [invoiceId], references: [id])
+  restaurant  Restaurant? @relation(fields: [restaurantId], references: [id])
+  processedBy User?       @relation(fields: [processedById], references: [id])
+
+  @@index([billId])
+  @@index([restaurantId])
+  @@map("payments")
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  restaurantId  String
+  phone         String
+  name          String?
+  email         String?
+  totalVisits   Int      @default(0)
+  totalSpend    Float    @default(0)
+  loyaltyPoints Int      @default(0)
+  tier          String   @default("BRONZE")
+  createdAt     DateTime @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+  orders     Order[]
+
+  @@unique([restaurantId, phone])
+  @@index([restaurantId])
+  @@index([phone])
+  @@map("customers")
+}
+
+model Inventory {
+  id           String   @id @default(cuid())
+  branchId     String
+  name         String
+  unit         String   @default("pcs")
+  currentStock Float    @default(0)
+  minStock     Float    @default(0)
+  costPrice    Float    @default(0)
+  category     String?
+  updatedAt    DateTime @updatedAt
+
+  branch Branch @relation(fields: [branchId], references: [id])
+
+  @@index([branchId])
+  @@map("inventory")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  branchId  String
+  userId    String?
+  type      String
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  data      Json?
+  createdAt DateTime @default(now())
+
+  branch Branch @relation(fields: [branchId], references: [id])
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@map("notifications")
+}
+
+model LoyaltyTier {
+  id           String @id @default(cuid())
+  restaurantId String
+  name         String
+  minPoints    Int    @default(0)
+  discount     Float  @default(0)
+  perks        Json?
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+
+  @@unique([restaurantId, name])
+  @@map("loyalty_tiers")
+}
+
+model Coupon {
+  id            String    @id @default(cuid())
+  restaurantId  String
+  code          String
+  discountType  String    @default("PERCENTAGE")
+  discountValue Float     @default(0)
+  minOrder      Float     @default(0)
+  maxUses       Int       @default(100)
+  usedCount     Int       @default(0)
+  expiresAt     DateTime?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+
+  @@unique([restaurantId, code])
+  @@map("coupons")
+}
+
+model Settings {
+  id           String @id @default(cuid())
+  restaurantId String
+  key          String
+  value        Json
+
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id])
+
+  @@unique([restaurantId, key])
+  @@map("settings")
+}
+
+model SubscriptionPlan {
+  id           String   @id @default(cuid())
+  name         String
+  slug         String   @unique
+  description  String?
+  monthlyPrice Float    @default(0)
+  yearlyPrice  Float    @default(0)
+  maxBranches  Int      @default(1)
+  maxStaff     Int      @default(5)
+  maxCustomers Int      @default(500)
+  maxOrders    Int      @default(1000)
+  features     Json?
+  trialDays    Int      @default(14)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id           String             @id @default(cuid())
+  restaurantId String
+  planId       String
+  status       SubscriptionStatus @default(TRIAL)
+  billingCycle BillingCycle       @default(MONTHLY)
+  startDate    DateTime           @default(now())
+  endDate      DateTime
+  autoRenew    Boolean            @default(true)
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+
+  restaurant Restaurant       @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  plan       SubscriptionPlan @relation(fields: [planId], references: [id])
+  invoices   Invoice[]
+
+  @@map("subscriptions")
+}
+
+model Invoice {
+  id             String        @id @default(cuid())
+  invoiceNumber  String        @unique
+  restaurantId   String
+  subscriptionId String?
+  amount         Float         @default(0)
+  taxAmount      Float         @default(0)
+  total          Float         @default(0)
+  status         InvoiceStatus @default(UNPAID)
+  dueDate        DateTime
+  paidAt         DateTime?
+  pdfUrl         String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  restaurant   Restaurant    @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
+  payments     Payment[]
+
+  @@map("invoices")
+}
+
+model AuditLog {
+  id           String   @id @default(cuid())
+  actorId      String?
+  actorEmail   String?
+  actorRole    String?
+  action       String
+  entity       String
+  entityId     String?
+  restaurantId String?
+  ipAddress    String?
+  metadata     Json?
+  createdAt    DateTime @default(now())
+
+  restaurant Restaurant? @relation(fields: [restaurantId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model PlatformSetting {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  value       Json
+  description String?
+  updatedAt   DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+enum FeatureKey {
+  MENU
+  TABLES
+  ORDERS
+  STAFF
+  CUSTOMERS
+  INVENTORY
+  ANALYTICS
+  BRANCHES
+  LOYALTY
+  REPORTS
+  SETTINGS
+}
+
+model Feature {
+  id          String      @id @default(cuid())
+  key         FeatureKey  @unique
+  name        String
+  description String?
+  category    String?     @default("Core")
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  globalSetting     GlobalFeatureSetting?
+  businessOverrides BusinessFeatureOverride[]
+  userOverrides     UserFeatureOverride[]
+
+  @@map("features")
+}
+
+model GlobalFeatureSetting {
+  id         String     @id @default(cuid())
+  featureKey FeatureKey @unique
+  enabled    Boolean    @default(true)
+  updatedBy  String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  feature Feature @relation(fields: [featureKey], references: [key], onDelete: Cascade)
+
+  @@index([featureKey])
+  @@map("global_feature_settings")
+}
+
+model BusinessFeatureOverride {
+  id           String     @id @default(cuid())
+  featureKey   FeatureKey
+  businessId   String
+  enabled      Boolean    @default(true)
+  updatedBy    String?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  feature    Feature    @relation(fields: [featureKey], references: [key], onDelete: Cascade)
+  restaurant Restaurant @relation(fields: [businessId], references: [id], onDelete: Cascade)
+
+  @@unique([featureKey, businessId])
+  @@index([featureKey])
+  @@index([businessId])
+  @@map("business_feature_overrides")
+}
+
+model UserFeatureOverride {
+  id         String     @id @default(cuid())
+  featureKey FeatureKey
+  userId     String
+  businessId String?
+  enabled    Boolean    @default(true)
+  updatedBy  String?
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  feature Feature @relation(fields: [featureKey], references: [key], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([featureKey, userId])
+  @@index([featureKey])
+  @@index([userId])
+  @@index([businessId])
+  @@map("user_feature_overrides")
+}
+
+model RestaurantQRCode {
+  id          String   @id @default(cuid())
+  secureToken String   @unique @default(cuid())
+  type        QRType   // RESTAURANT_MENU | TABLE
+  businessId  String
+  branchId    String
+  tableId     String?
+  tableName   String?
+  active      Boolean  @default(true)
+  scanCount   Int      @default(0)
+  createdBy   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  business Restaurant @relation(fields: [businessId], references: [id])
+  branch   Branch     @relation(fields: [branchId], references: [id])
+  table    Table?     @relation(fields: [tableId], references: [id])
+  orders   Order[]
+
+  @@index([businessId])
+  @@index([branchId])
+  @@index([tableId])
+  @@index([secureToken])
+  @@map("restaurant_qr_codes")
+}
+
+model OrderStatusHistory {
+  id        String      @id @default(cuid())
+  orderId   String
+  status    OrderStatus
+  note      String?
+  changedBy String?
+  createdAt DateTime    @default(now())
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("order_status_history")
+}
+
+
+
