@@ -1,6 +1,6 @@
 // ─── Enums ────────────────────────────────────────────
 
-export type UserRole = "SUPERADMIN" | "ADMIN" | "MANAGER" | "KITCHEN" | "CASHIER" | "WAITER";
+export type UserRole = "SUPERADMIN" | "ADMIN" | "MANAGER" | "KITCHEN" | "CASHIER" | "WAITER" | "CUSTOMER";
 export type OrderStatus = "PENDING" | "RECEIVED" | "PREPARING" | "READY" | "SERVED" | "COMPLETED" | "CANCELLED";
 export type TableStatus = "AVAILABLE" | "OCCUPIED" | "RESERVED" | "CLEANING";
 export type PaymentMethod = "CASH" | "UPI" | "CREDIT_CARD" | "DEBIT_CARD";
@@ -396,4 +396,3 @@ export interface AuthSession {
 }
 
 export * from "./super-admin";
-

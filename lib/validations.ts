@@ -84,6 +84,7 @@ export const orderSchema = z.object({
 export const orderStatusSchema = z.object({
   status: z.enum([
     "PENDING",
+    "ACCEPTED",
     "RECEIVED",
     "PREPARING",
     "READY",
@@ -125,6 +126,7 @@ export const customerOrderSubmitSchema = z.object({
 export const orderStatusUpdateSchema = z.object({
   status: z.enum([
     "PENDING",
+    "ACCEPTED",
     "RECEIVED",
     "PREPARING",
     "READY",
@@ -192,4 +194,3 @@ export const analyticsFilterSchema = z.object({
 });
 
 export * from "./validations/super-admin";
-

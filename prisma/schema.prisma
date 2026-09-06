@@ -14,10 +14,12 @@ enum UserRole {
   KITCHEN
   CASHIER
   WAITER
+  CUSTOMER
 }
 
 enum OrderStatus {
   PENDING
+  ACCEPTED
   RECEIVED
   PREPARING
   READY
@@ -46,15 +48,19 @@ enum TableStatus {
 
 enum PaymentMethod {
   CASH
+  RAZORPAY
   UPI
   CREDIT_CARD
   DEBIT_CARD
 }
 
 enum PaymentStatus {
+  NOT_REQUIRED
   PENDING
+  PROCESSING
   PAID
   FAILED
+  CANCELLED
   REFUNDED
 }
 
@@ -252,6 +258,14 @@ model Order {
   serviceCharge Float       @default(0)
   discount      Float       @default(0)
   total         Float       @default(0)
+  paymentStatus PaymentStatus @default(NOT_REQUIRED)
+  paymentProvider String?
+  gatewayOrderId String? @unique
+  gatewayPaymentId String? @unique
+  paymentReceipt String?
+  paymentFailureReason String?
+  paymentInitiatedAt DateTime?
+  paidAt DateTime?
   notes         String?
   couponCode    String?
   priority      Boolean     @default(false)
@@ -669,6 +683,4 @@ model OrderStatusHistory {
   @@index([orderId])
   @@map("order_status_history")
 }
-
-
 

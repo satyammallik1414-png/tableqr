@@ -52,15 +52,25 @@ function LoginForm() {
         return;
       }
 
-      if (res.redirectUrl) {
-        // Immediately fetch fresh permissions for newly logged-in user
+      toast.success("Login successful! Redirecting...");
+      const destination = res.redirectUrl || "/admin/dashboard";
+
+      try {
         await usePermissionStore.getState().fetchEffectiveFeatures();
-        router.refresh();
-        router.push(res.redirectUrl);
+      } catch {
+        // non-blocking
       }
-    } catch {
-      // In case server action redirect is handled by Next.js
-    } finally {
+
+      // Perform a full browser navigation so cookies and session are cleanly attached
+      window.location.href = destination;
+    } catch (err: unknown) {
+      const errStr = String(err);
+      if (errStr.includes("NEXT_REDIRECT")) {
+        // Redirection in progress
+        return;
+      }
+      console.error("Login client error:", err);
+      toast.error("Something went wrong. Please try again.");
       setLoading(false);
     }
   };

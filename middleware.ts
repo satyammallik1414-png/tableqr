@@ -10,7 +10,7 @@ export default auth((req) => {
   const role = session?.user?.role;
 
   const isRoot = pathname === "/";
-  const publicPrefixes = ["/login", "/register", "/api/auth", "/order"];
+  const publicPrefixes = ["/login", "/register", "/customer/register", "/api/auth", "/order"];
   const isPublic = isRoot || publicPrefixes.some((p) => pathname.startsWith(p));
   const isCustomerMenu = pathname.startsWith("/menu/") || pathname.startsWith("/order");
   const isAuthApi = pathname.startsWith("/api/auth");
@@ -18,9 +18,22 @@ export default auth((req) => {
   const isPublicOrderSubmit = pathname === "/api/order/submit";
   const isPublicOrderStatus = pathname.startsWith("/api/order/") && pathname.endsWith("/status") && req.method === "GET";
   const isPublicOrderCancel = pathname.startsWith("/api/order/") && pathname.endsWith("/cancel") && req.method === "POST";
+  const isPublicOrderPay = pathname.startsWith("/api/order/") && pathname.endsWith("/pay") && req.method === "POST";
+  const isPublicMenuApi = pathname === "/api/menu" && req.method === "GET";
+  const isPublicFeaturesApi = pathname === "/api/features/effective" && req.method === "GET";
   const isApiRoute = pathname.startsWith("/api/");
 
-  if (isCustomerMenu || isAuthApi || isPublicQrApi || isPublicOrderSubmit || isPublicOrderStatus || isPublicOrderCancel) {
+  if (
+    isCustomerMenu ||
+    isAuthApi ||
+    isPublicQrApi ||
+    isPublicOrderSubmit ||
+    isPublicOrderStatus ||
+    isPublicOrderCancel ||
+    isPublicOrderPay ||
+    isPublicMenuApi ||
+    isPublicFeaturesApi
+  ) {
     return NextResponse.next();
   }
 
@@ -47,9 +60,12 @@ export default auth((req) => {
       userEmail === "satyammallik1414@gmail.com" ||
       userEmail === "superadmin@smartserve.ai";
 
-    // Auto-open super admin panel when superadmin (e.g. satyammallik1414@gmail.com) visits home or auth pages
-    if (isSuperAdmin && (pathname === "/" || pathname === "/login" || pathname === "/register")) {
-      return NextResponse.redirect(new URL("/super-admin", req.url));
+    // Auto-open appropriate panel when authenticated user visits home or auth pages
+    if (pathname === "/" || pathname === "/login" || pathname === "/register") {
+      if (isSuperAdmin) return NextResponse.redirect(new URL("/super-admin", req.url));
+      if (role === "KITCHEN") return NextResponse.redirect(new URL("/kitchen", req.url));
+      if (role === "CASHIER") return NextResponse.redirect(new URL("/counter", req.url));
+      return NextResponse.redirect(new URL("/admin/dashboard", req.url));
     }
 
     if (pathname.startsWith("/super-admin") && !isSuperAdmin) {
@@ -77,6 +93,6 @@ export default auth((req) => {
 
 export const config = {
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|icons.svg|images/).*)",
+    "/((?!api/auth|_next/static|_next/image|favicon.ico|icons.svg|images/|icons/|manifest.json|sw.js).*)",
   ],
 };

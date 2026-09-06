@@ -45,18 +45,30 @@ export async function loginAction(data: {
       }
     }
 
-    await signIn("credentials", {
-      email,
-      password: data.password,
-      redirectTo: targetUrl,
-    });
+    try {
+      await signIn("credentials", {
+        email,
+        password: data.password,
+        redirect: false,
+      });
+    } catch (signInErr) {
+      if (signInErr instanceof AuthError) {
+        return { success: false, error: "Invalid email or password." };
+      }
+      // If Next.js redirect was thrown, it means sign-in succeeded
+      const errStr = String(signInErr);
+      if (!errStr.includes("NEXT_REDIRECT")) {
+        console.error("signIn error:", signInErr);
+        return { success: false, error: "Authentication failed. Please try again." };
+      }
+    }
 
     return { success: true, redirectUrl: targetUrl };
   } catch (error) {
     if (error instanceof AuthError) {
       return { success: false, error: "Invalid email or password." };
     }
-    // Re-throw redirect errors so Next.js performs navigation
-    throw error;
+    console.error("loginAction error:", error);
+    return { success: false, error: "Invalid email or password." };
   }
 }

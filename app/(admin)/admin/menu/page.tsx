@@ -68,6 +68,7 @@ export default function MenuManagementPage() {
   const queryClient = useQueryClient();
   const [search, setSearch] = useState("");
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>("ALL");
+  const [dietaryFilter, setDietaryFilter] = useState<"ALL" | "VEG" | "NON_VEG">("ALL");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [categoryDialogOpen, setCategoryDialogOpen] = useState(false);
   const [newGlobalCategoryName, setNewGlobalCategoryName] = useState("");
@@ -179,7 +180,13 @@ export default function MenuManagementPage() {
       i.description?.toLowerCase().includes(search.toLowerCase());
     const matchesCategory =
       selectedCategoryFilter === "ALL" || i.categoryId === selectedCategoryFilter;
-    return matchesSearch && matchesCategory;
+    const matchesDietary =
+      dietaryFilter === "ALL"
+        ? true
+        : dietaryFilter === "VEG"
+        ? i.isVeg
+        : !i.isVeg;
+    return matchesSearch && matchesCategory && matchesDietary;
   });
 
   return (
@@ -297,7 +304,7 @@ export default function MenuManagementPage() {
         </div>
 
         {/* Search & Filter */}
-        <div className="flex gap-3">
+        <div className="flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
             <Input
@@ -307,9 +314,45 @@ export default function MenuManagementPage() {
               className="pl-9"
             />
           </div>
-          <Button variant="outline" size="icon" className="shrink-0">
-            <Filter className="h-4 w-4 text-gray-500" />
-          </Button>
+          {/* Dietary Filter Pills */}
+          <div className="flex items-center gap-1 p-1 bg-gray-100 dark:bg-gray-800/80 border border-gray-200/80 dark:border-gray-700/60 rounded-xl shrink-0">
+            <button
+              onClick={() => setDietaryFilter("ALL")}
+              className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                dietaryFilter === "ALL"
+                  ? "bg-white text-gray-900 shadow-xs dark:bg-gray-700 dark:text-white"
+                  : "text-gray-500 hover:text-gray-900 dark:text-gray-400"
+              }`}
+            >
+              All Types
+            </button>
+            <button
+              onClick={() => setDietaryFilter("VEG")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                dietaryFilter === "VEG"
+                  ? "bg-emerald-600 text-white shadow-xs"
+                  : "text-gray-600 hover:text-emerald-700 dark:text-gray-300"
+              }`}
+            >
+              <div className="flex h-3 w-3 shrink-0 items-center justify-center rounded-xs border border-emerald-400 bg-white p-0.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+              </div>
+              Veg
+            </button>
+            <button
+              onClick={() => setDietaryFilter("NON_VEG")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                dietaryFilter === "NON_VEG"
+                  ? "bg-rose-600 text-white shadow-xs"
+                  : "text-gray-600 hover:text-rose-700 dark:text-gray-300"
+              }`}
+            >
+              <div className="flex h-3 w-3 shrink-0 items-center justify-center rounded-xs border border-rose-400 bg-white p-0.5">
+                <div className="h-1.5 w-1.5 rounded-full bg-rose-600" />
+              </div>
+              Non-Veg
+            </button>
+          </div>
         </div>
 
         {/* Category Pills Filter */}
@@ -379,17 +422,24 @@ export default function MenuManagementPage() {
                     )}
                     <div className="absolute left-2 top-2">
                       <div
-                        className={`h-4 w-4 rounded-full border-2 ${
+                        className={`flex items-center gap-1.5 px-2 py-0.5 rounded-md border text-[10px] font-bold shadow-xs backdrop-blur-xs ${
                           item.isVeg
-                            ? "border-success-500 bg-success-100"
-                            : "border-danger-500 bg-danger-100"
+                            ? "border-emerald-500/80 bg-white/95 text-emerald-800 dark:bg-gray-900/90 dark:text-emerald-300 dark:border-emerald-600"
+                            : "border-rose-500/80 bg-white/95 text-rose-800 dark:bg-gray-900/90 dark:text-rose-300 dark:border-rose-600"
                         }`}
                       >
                         <div
-                          className={`m-0.5 h-2 w-2 rounded-full ${
-                            item.isVeg ? "bg-success-500" : "bg-danger-500"
-                          }`}
-                        />
+                          className={`flex h-3 w-3 shrink-0 items-center justify-center rounded-xs border ${
+                            item.isVeg ? "border-emerald-600" : "border-rose-600"
+                          } p-0.5`}
+                        >
+                          <div
+                            className={`h-1.5 w-1.5 rounded-full ${
+                              item.isVeg ? "bg-emerald-600" : "bg-rose-600"
+                            }`}
+                          />
+                        </div>
+                        <span>{item.isVeg ? "Veg" : "Non-Veg"}</span>
                       </div>
                     </div>
                     <div className="absolute right-2 top-2 flex gap-1">
@@ -543,6 +593,7 @@ function MenuForm({
   });
 
   const selectedCategoryId = watch("categoryId");
+  const isVeg = watch("isVeg");
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -828,24 +879,70 @@ function MenuForm({
         </div>
       </div>
 
-      {/* Toggles */}
-      <div className="grid grid-cols-2 gap-3 pt-1">
-        <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-100 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
-          <input type="checkbox" {...register("isVeg")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
-          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Vegetarian</span>
+      {/* Food Type (Vegetarian / Non-Veg) */}
+      <div className="space-y-1.5 pt-1">
+        <Label className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
+          Food Type (Dietary)
         </Label>
-        <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-100 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
-          <input type="checkbox" {...register("isFeatured")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
-          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Featured</span>
+        <div className="grid grid-cols-2 gap-3">
+          <button
+            type="button"
+            onClick={() => setValue("isVeg", true, { shouldDirty: true, shouldTouch: true })}
+            className={`flex items-center gap-2.5 rounded-xl border p-2.5 text-sm font-semibold transition-all cursor-pointer ${
+              isVeg
+                ? "border-emerald-500 bg-emerald-50 text-emerald-950 ring-2 ring-emerald-500/30 shadow-xs dark:bg-emerald-950/50 dark:text-emerald-200 dark:border-emerald-500"
+                : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400"
+            }`}
+          >
+            <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border-2 border-emerald-600 p-0.5">
+              <div className="h-2 w-2 rounded-full bg-emerald-600" />
+            </div>
+            <div className="text-left">
+              <div className="font-bold text-xs sm:text-sm leading-tight">Vegetarian</div>
+              <div className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">Pure Veg Dish</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setValue("isVeg", false, { shouldDirty: true, shouldTouch: true })}
+            className={`flex items-center gap-2.5 rounded-xl border p-2.5 text-sm font-semibold transition-all cursor-pointer ${
+              !isVeg
+                ? "border-rose-500 bg-rose-50 text-rose-950 ring-2 ring-rose-500/30 shadow-xs dark:bg-rose-950/50 dark:text-rose-200 dark:border-rose-500"
+                : "border-gray-200 bg-white text-gray-600 hover:border-gray-300 hover:bg-gray-50 dark:border-gray-800 dark:bg-gray-900 dark:text-gray-400"
+            }`}
+          >
+            <div className="flex h-4 w-4 shrink-0 items-center justify-center rounded-xs border-2 border-rose-600 p-0.5">
+              <div className="h-2 w-2 rounded-full bg-rose-600" />
+            </div>
+            <div className="text-left">
+              <div className="font-bold text-xs sm:text-sm leading-tight">Non-Veg</div>
+              <div className="text-[10px] text-gray-500 dark:text-gray-400 font-normal">Meat / Chicken / Fish</div>
+            </div>
+          </button>
+        </div>
+        <input type="hidden" {...register("isVeg")} />
+      </div>
+
+      {/* Badges & Highlights */}
+      <div className="space-y-1.5 pt-1">
+        <Label className="text-xs font-bold uppercase tracking-wider text-gray-700 dark:text-gray-300">
+          Badges & Promotion
         </Label>
-        <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-100 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
-          <input type="checkbox" {...register("isTrending")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
-          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Trending</span>
-        </Label>
-        <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-100 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
-          <input type="checkbox" {...register("isRecommended")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
-          <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Recommended</span>
-        </Label>
+        <div className="grid grid-cols-3 gap-2">
+          <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
+            <input type="checkbox" {...register("isFeatured")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
+            <span className="text-xs font-medium text-gray-800 dark:text-gray-200">Featured</span>
+          </Label>
+          <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
+            <input type="checkbox" {...register("isTrending")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
+            <span className="text-xs font-medium text-gray-800 dark:text-gray-200">Trending 🔥</span>
+          </Label>
+          <Label className="flex cursor-pointer items-center gap-2 rounded-xl border border-gray-200 p-2.5 hover:bg-gray-50 transition-colors dark:border-gray-800 dark:hover:bg-gray-800/50">
+            <input type="checkbox" {...register("isRecommended")} className="rounded text-primary-600 focus:ring-primary-500 h-4 w-4" />
+            <span className="text-xs font-medium text-gray-800 dark:text-gray-200">Recommended ⭐</span>
+          </Label>
+        </div>
       </div>
 
       <Button type="submit" className="w-full mt-2" disabled={loading}>

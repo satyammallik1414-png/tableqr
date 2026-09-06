@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
-import { useOrders, useUpdateOrderStatus } from "@/hooks/useOrders";
+import { useEffect, useRef, useState } from "react";
+import { useOrders } from "@/hooks/useOrders";
 import { useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import {
   Search,
-  Filter,
   CheckCircle2,
   ChefHat,
   BellRing,
@@ -14,7 +13,6 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  Phone,
   User,
   QrCode,
   RefreshCw,
@@ -26,17 +24,16 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatDateTime, getTimeSince } from "@/lib/utils";
 import { ORDER_STATUS_COLORS } from "@/lib/constants";
-import type { OrderStatus } from "@/types";
 import { FeatureGuard } from "@/components/shared/FeatureGuard";
 import { AcceptOrderDialog } from "@/components/admin/AcceptOrderDialog";
 import { CancelOrderDialog } from "@/components/admin/CancelOrderDialog";
-import toast from "react-hot-toast";
 
 export default function OrdersPage() {
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("ALL");
+  const [clockNow, setClockNow] = useState(() => Date.now());
+  const autoCompletionRequested = useRef(new Set<string>());
   const { data: orders, isLoading, refetch, isFetching } = useOrders();
-  const updateStatus = useUpdateOrderStatus();
   const queryClient = useQueryClient();
 
   // Dialog states
@@ -68,17 +65,26 @@ export default function OrdersPage() {
     CANCELLED: orders?.filter((o) => o.status === "CANCELLED").length ?? 0,
   };
 
-  const handleQuickStatusChange = async (orderId: string, nextStatus: OrderStatus) => {
-    try {
-      await updateStatus.mutateAsync({
-        orderId,
-        status: nextStatus,
-      });
-      toast.success(`Order moved to ${nextStatus}`);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to update order status");
+  useEffect(() => {
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const expired = orders?.find((order: any) => {
+      if (!["PREPARING", "RECEIVED", "READY"].includes(order.status)) return false;
+      const readyAt = order.estimatedReadyAt
+        ? new Date(order.estimatedReadyAt).getTime()
+        : order.acceptedAt && order.estimatedReadyMinutes
+        ? new Date(order.acceptedAt).getTime() + order.estimatedReadyMinutes * 60000
+        : null;
+      return readyAt !== null && readyAt <= clockNow && !autoCompletionRequested.current.has(order.id);
+    });
+    if (expired) {
+      autoCompletionRequested.current.add(expired.id);
+      refetch();
     }
-  };
+  }, [clockNow, orders, refetch]);
 
   return (
     <FeatureGuard featureKey="ORDERS">
@@ -163,11 +169,21 @@ export default function OrdersPage() {
         ) : (
           <div className="space-y-3">
             {filtered.map((order: any) => {
-              const now = Date.now();
+              const now = clockNow;
               const submittedTime = new Date(order.submittedAt || order.createdAt).getTime();
               const elapsedMinutes = Math.floor((now - submittedTime) / 60000);
               const isOverduePending = order.status === "PENDING" && elapsedMinutes >= 10;
               const isWarningPending = order.status === "PENDING" && elapsedMinutes >= 5;
+
+              const readyTimestamp = order.estimatedReadyAt
+                ? new Date(order.estimatedReadyAt).getTime()
+                : order.acceptedAt && order.estimatedReadyMinutes
+                ? new Date(order.acceptedAt).getTime() + order.estimatedReadyMinutes * 60000
+                : null;
+              const isPrepCompleted = readyTimestamp !== null && now >= readyTimestamp;
+              const isOrderReady = order.status === "READY" || (order.status === "PREPARING" && isPrepCompleted);
+              const remainingSeconds = readyTimestamp ? Math.max(0, Math.ceil((readyTimestamp - now) / 1000)) : 0;
+              const countdown = `${String(Math.floor(remainingSeconds / 60)).padStart(2, "0")}:${String(remainingSeconds % 60).padStart(2, "0")}`;
 
               return (
                 <motion.div
@@ -178,7 +194,9 @@ export default function OrdersPage() {
                 >
                   <Card
                     className={`border transition-all ${
-                      isOverduePending
+                      isOrderReady
+                        ? "border-emerald-300 bg-emerald-50/20 ring-1 ring-emerald-300"
+                        : isOverduePending
                         ? "border-red-300 bg-red-50/40 ring-1 ring-red-400"
                         : isWarningPending
                         ? "border-amber-300 bg-amber-50/30"
@@ -216,8 +234,19 @@ export default function OrdersPage() {
                                 {order.orderNumber || `ORD-${order.id.slice(-6).toUpperCase()}`}
                               </span>
 
-                              <Badge className={`text-xs px-2 py-0.5 ${ORDER_STATUS_COLORS[order.status]}`}>
-                                {order.status}
+                              {isOrderReady ? (
+                                <Badge className="bg-emerald-600 text-white font-bold text-xs px-2.5 py-0.5 gap-1 shadow-xs">
+                                  <BellRing className="h-3 w-3 animate-bounce" />
+                                  READY
+                                </Badge>
+                              ) : (
+                                <Badge className={`text-xs px-2 py-0.5 ${ORDER_STATUS_COLORS[order.status]}`}>
+                                  {order.status}
+                                </Badge>
+                              )}
+
+                              <Badge className={`text-[10px] px-2 py-0.5 ${order.paymentStatus === "PAID" ? "bg-emerald-100 text-emerald-800" : order.paymentStatus === "NOT_REQUIRED" ? "bg-slate-100 text-slate-700" : order.paymentStatus === "FAILED" || order.paymentStatus === "CANCELLED" ? "bg-red-100 text-red-700" : "bg-amber-100 text-amber-800"}`}>
+                                Payment: {String(order.paymentStatus || "NOT_REQUIRED").replace("_", " ")}
                               </Badge>
 
                               {/* Overdue Warnings for Pending */}
@@ -254,10 +283,29 @@ export default function OrdersPage() {
                                 {getTimeSince(order.submittedAt || order.createdAt)})
                               </span>
 
-                              {order.estimatedReadyMinutes && order.status === "PREPARING" && (
-                                <span className="text-emerald-700 font-semibold flex items-center gap-1">
-                                  <ChefHat className="h-3 w-3" />
-                                  Est. {order.estimatedReadyMinutes}m prep
+                              {order.status === "PREPARING" && (
+                                <span
+                                  className={
+                                    isPrepCompleted
+                                      ? "text-emerald-700 font-bold flex items-center gap-1"
+                                      : "text-blue-700 font-semibold flex items-center gap-1"
+                                  }
+                                >
+                                  {isPrepCompleted ? (
+                                    <BellRing className="h-3 w-3 text-emerald-600 animate-bounce" />
+                                  ) : (
+                                    <ChefHat className="h-3 w-3 text-blue-600" />
+                                  )}
+                                  {isPrepCompleted
+                                    ? "Cooking time finished • Ready!"
+                                    : `Est. ${order.estimatedReadyMinutes || 15}m prep`}
+                                </span>
+                              )}
+
+                              {order.status === "READY" && (
+                                <span className="text-emerald-700 font-bold flex items-center gap-1">
+                                  <BellRing className="h-3 w-3 text-emerald-600" />
+                                  Order is Ready!
                                 </span>
                               )}
                             </div>
@@ -268,10 +316,19 @@ export default function OrdersPage() {
                                 order.items.map((item: any, i: number) => (
                                   <span
                                     key={i}
-                                    className="inline-flex items-center rounded-md border border-slate-200 bg-slate-50 px-2 py-0.5 text-[11px] font-medium text-slate-700"
+                                    className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors ${
+                                      isOrderReady
+                                        ? "border-emerald-300 bg-emerald-50 text-emerald-900 font-semibold"
+                                        : "border-slate-200 bg-slate-50 text-slate-700"
+                                    }`}
                                   >
                                     <strong className="mr-1 text-navy-900">{item.quantity}×</strong>
                                     {item.name}
+                                    {isOrderReady && (
+                                      <span className="ml-1.5 inline-block text-[9px] font-bold uppercase text-emerald-700 bg-white/90 px-1 rounded border border-emerald-300">
+                                        Ready
+                                      </span>
+                                    )}
                                   </span>
                                 ))}
                             </div>
@@ -292,18 +349,19 @@ export default function OrdersPage() {
                           </div>
                         </div>
 
-                        {/* Right: Price & Quick Action Buttons */}
-                        <div className="flex items-center justify-between lg:justify-end gap-3 pt-2 lg:pt-0 border-t lg:border-t-0 border-slate-100">
+                        {/* Right: Pricing & Actions */}
+                        <div className="flex flex-row items-center justify-between gap-4 border-t border-slate-100 pt-3 lg:flex-col lg:items-end lg:justify-center lg:border-t-0 lg:pt-0">
                           <div className="text-left lg:text-right">
-                            <p className="font-heading font-bold text-navy-900 text-base">
+                            <span className="text-xs text-slate-400">Total</span>
+                            <p className="font-heading text-lg font-bold text-navy-900">
                               {formatCurrency(order.total)}
                             </p>
-                            <p className="text-[11px] text-slate-400">
-                              {order.items?.length || 0} items
-                            </p>
+                            <span className="text-[10px] text-slate-400">
+                              {order.orderItems?.length || order.items?.length || 0} item(s)
+                            </span>
                           </div>
 
-                          {/* Action Buttons: strictly Accept and Cancel */}
+                          {/* Action Buttons */}
                           <div className="flex items-center gap-2">
                             {(order.status === "PENDING" || order.status === "RECEIVED") && (
                               <>
@@ -328,15 +386,21 @@ export default function OrdersPage() {
                             )}
 
                             {(order.status === "PREPARING" || order.status === "READY") && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => setCancellingOrder(order)}
-                                className="text-red-600 border border-red-200 hover:bg-red-50 hover:border-red-300 font-semibold text-xs h-8 px-3.5 rounded-xl gap-1.5 cursor-pointer"
-                              >
-                                <XCircle className="h-3.5 w-3.5" />
-                                Cancel
-                              </Button>
+                              <div className="flex min-w-[112px] items-center justify-center gap-2 rounded-xl border border-blue-200 bg-blue-50 px-4 py-2 text-blue-900" role="timer" aria-live="polite">
+                                <Clock className="h-4 w-4" />
+                                <span className="font-mono text-lg font-extrabold tabular-nums">{countdown}</span>
+                              </div>
+                            )}
+                            {order.status === "ACCEPTED" && (
+                              <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                                Waiting for customer payment
+                              </div>
+                            )}
+                            {order.status === "COMPLETED" && (
+                              <div className="flex min-w-[112px] items-center justify-center gap-2 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-emerald-800" role="status">
+                                <CheckCircle2 className="h-4 w-4" />
+                                <span className="text-sm font-extrabold">Completed</span>
+                              </div>
                             )}
                           </div>
                         </div>

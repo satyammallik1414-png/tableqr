@@ -1,21 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
+import { getPlatformFee } from "@/lib/platform-fee";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(request: Request) {
+export async function GET() {
   try {
     const session = await auth();
-    let restaurantId = session?.user?.restaurantId;
-
-    if (!restaurantId) {
-      const firstRest = await prisma.restaurant.findFirst({
-        where: { isActive: true },
-        select: { id: true },
-      });
-      restaurantId = firstRest?.id;
-    }
+    const restaurantId = session?.user?.restaurantId;
+    if (!session?.user || !restaurantId) return NextResponse.json({ success: false, error: "Restaurant account required" }, { status: 403 });
 
     const restaurant = restaurantId
       ? await prisma.restaurant.findUnique({
@@ -43,17 +37,18 @@ export async function GET(request: Request) {
     const tax = savedData?.tax || {
       cgst: 2.5,
       sgst: 2.5,
-      serviceCharge: 10,
     };
+    const platformFee = await getPlatformFee(restaurantId);
 
     const prefs = savedData?.prefs || {
       notifications: true,
       loyaltyProgram: true,
       autoDeduct: false,
     };
+    const paymentGateway = { enabled: false, provider: "razorpay", configured: Boolean(process.env.RAZORPAY_KEY_ID && process.env.RAZORPAY_KEY_SECRET), ...(savedData?.paymentGateway || {}) };
 
     const payment = savedData?.payment ? {
-      collectPaymentUpfront: true,
+      collectPaymentUpfront: false,
       upiEnabled: true,
       upiId: "smartserve@upi",
       payeeName: restaurant?.name || "SmartServe Restaurant",
@@ -63,7 +58,7 @@ export async function GET(request: Request) {
       cardEnabled: true,
       ...savedData.payment,
     } : {
-      collectPaymentUpfront: true,
+      collectPaymentUpfront: false,
       upiEnabled: true,
       upiId: "smartserve@upi",
       payeeName: restaurant?.name || "SmartServe Restaurant",
@@ -76,16 +71,12 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       data: {
-        restaurant: restaurant || {
-          name: "SmartServe AI",
-          email: "admin@smartserve.ai",
-          phone: "+91 98765 43210",
-          address: "123, Restaurant Street, Mumbai - 400001",
-          gstNumber: "00AAAAA0000A1Z5",
-        },
+        restaurant,
         tax,
+        platformFee,
         prefs,
         payment,
+        paymentGateway,
       },
     });
   } catch (error) {
@@ -100,18 +91,11 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const session = await auth();
-    let restaurantId = session?.user?.restaurantId;
-
-    if (!restaurantId) {
-      const firstRest = await prisma.restaurant.findFirst({
-        where: { isActive: true },
-        select: { id: true },
-      });
-      restaurantId = firstRest?.id;
-    }
+    const restaurantId = session?.user?.restaurantId;
+    if (!session?.user || !restaurantId) return NextResponse.json({ success: false, error: "Restaurant account required" }, { status: 403 });
 
     const body = await request.json();
-    const { restaurant, tax, prefs, payment } = body;
+    const { restaurant, tax, prefs, payment, paymentGateway } = body;
 
     // 1. Update restaurant record if details provided
     if (restaurantId && restaurant) {
@@ -130,10 +114,10 @@ export async function POST(request: Request) {
     // 2. Persist extended settings (tax, preferences, payment methods) into PlatformSetting
     const settingKey = restaurantId ? `settings_${restaurantId}` : "settings_default";
     const payload = {
-      tax: tax || { cgst: 2.5, sgst: 2.5, serviceCharge: 10 },
+      tax: { cgst: Number(tax?.cgst) || 0, sgst: Number(tax?.sgst) || 0 },
       prefs: prefs || { notifications: true, loyaltyProgram: true, autoDeduct: false },
       payment: payment || {
-        collectPaymentUpfront: true,
+        collectPaymentUpfront: false,
         upiEnabled: true,
         upiId: "smartserve@upi",
         payeeName: restaurant?.name || "SmartServe Restaurant",
@@ -142,6 +126,7 @@ export async function POST(request: Request) {
         cashEnabled: true,
         cardEnabled: true,
       },
+      paymentGateway: { enabled: Boolean(paymentGateway?.enabled), provider: "razorpay" },
       updatedAt: new Date().toISOString(),
     };
 
@@ -155,20 +140,6 @@ export async function POST(request: Request) {
         key: settingKey,
         value: payload,
         description: `Settings for restaurant ${restaurantId || "default"}`,
-      },
-    });
-
-    // Also sync settings_default for fallback consistency
-    await prisma.platformSetting.upsert({
-      where: { key: "settings_default" },
-      update: {
-        value: payload,
-        description: "Default Platform Settings",
-      },
-      create: {
-        key: "settings_default",
-        value: payload,
-        description: "Default Platform Settings",
       },
     });
 

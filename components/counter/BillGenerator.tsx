@@ -46,7 +46,6 @@ export function BillGenerator({
 }: BillGeneratorProps) {
   const [discount, setDiscount] = useState(0);
   const [discountType, setDiscountType] = useState<"PERCENTAGE" | "FLAT">("FLAT");
-  const [serviceCharge, setServiceCharge] = useState(0);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [splitCount, setSplitCount] = useState(1);
   const [showInvoice, setShowInvoice] = useState(false);
@@ -55,8 +54,8 @@ export function BillGenerator({
   const subtotal = order.subtotal;
   const { cgst, sgst, totalTax } = calculateGST(subtotal);
   const discountAmount = discountType === "PERCENTAGE" ? (subtotal * discount) / 100 : discount;
-  const serviceChargeAmount = (subtotal * serviceCharge) / 100;
-  const total = subtotal + totalTax + serviceChargeAmount - discountAmount;
+  const platformFee = Math.max(0, order.serviceCharge || 0);
+  const total = subtotal + totalTax + platformFee - discountAmount;
   const perPerson = splitCount > 1 ? total / splitCount : total;
 
   const generateBillMutation = useMutation({
@@ -68,7 +67,7 @@ export function BillGenerator({
           orderId: order.id,
           discount: discountAmount,
           discountType,
-          serviceCharge: serviceChargeAmount,
+          serviceCharge: platformFee,
           paymentMethod,
           splitCount,
         }),
@@ -166,14 +165,14 @@ export function BillGenerator({
           </div>
 
           <div className="space-y-2">
-            <Label>Service Charge (%)</Label>
+            <Label>Platform Fee per Order</Label>
             <Input
               type="number"
-              value={serviceCharge}
-              onChange={(e) => setServiceCharge(Number(e.target.value))}
-              min={0}
-              max={100}
+              value={platformFee}
+              readOnly
+              disabled
             />
+            <p className="text-xs text-gray-500">Set by Super Admin</p>
           </div>
 
           <div className="space-y-2">
@@ -233,10 +232,10 @@ export function BillGenerator({
             <span className="text-gray-500">SGST (2.5%)</span>
             <span>{formatCurrency(sgst)}</span>
           </div>
-          {serviceCharge > 0 && (
+          {platformFee > 0 && (
             <div className="flex justify-between text-sm">
-              <span className="text-gray-500">Service Charge</span>
-              <span>{formatCurrency(serviceChargeAmount)}</span>
+              <span className="text-gray-500">Platform Fee</span>
+              <span>{formatCurrency(platformFee)}</span>
             </div>
           )}
           {discount > 0 && (
@@ -328,7 +327,7 @@ export function BillGenerator({
                 </div>
                 {bill.serviceCharge > 0 && (
                   <div className="flex justify-between">
-                    <span>Service Charge</span>
+                    <span>Platform Fee</span>
                     <span>{formatCurrency(bill.serviceCharge)}</span>
                   </div>
                 )}

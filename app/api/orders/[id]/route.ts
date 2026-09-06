@@ -39,10 +39,37 @@ export async function PATCH(
       lastUpdatedAt: now,
     };
 
-    if (status === "PREPARING" && !existingOrder.acceptedAt) {
-      updateData.acceptedAt = now;
-    } else if (status === "CANCELLED" && !existingOrder.cancelledAt) {
-      updateData.cancelledAt = now;
+    if (status === "PREPARING") {
+      if (!existingOrder.acceptedAt) {
+        updateData.acceptedAt = now;
+      }
+      const prepMinutes = (body as any).estimatedReadyMinutes || existingOrder.estimatedReadyMinutes || 15;
+      updateData.estimatedReadyMinutes = prepMinutes;
+      if (!existingOrder.estimatedReadyAt) {
+        updateData.estimatedReadyAt = new Date(now.getTime() + prepMinutes * 60000);
+      }
+    } else if (status === "CANCELLED") {
+      const readyTimestamp = existingOrder.estimatedReadyAt
+        ? new Date(existingOrder.estimatedReadyAt).getTime()
+        : existingOrder.acceptedAt && existingOrder.estimatedReadyMinutes
+        ? new Date(existingOrder.acceptedAt).getTime() + existingOrder.estimatedReadyMinutes * 60000
+        : null;
+
+      const isTimeFinished = readyTimestamp !== null && now.getTime() >= readyTimestamp;
+
+      if (existingOrder.status === "READY" || isTimeFinished) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Cannot cancel order: preparation time has completed and order is ready.",
+          },
+          { status: 400 }
+        );
+      }
+
+      if (!existingOrder.cancelledAt) {
+        updateData.cancelledAt = now;
+      }
       if (body.cancellationReason) {
         updateData.cancellationReason = body.cancellationReason;
       }
@@ -69,10 +96,10 @@ export async function PATCH(
         },
       });
 
-      if ((status === "SERVED" || status === "COMPLETED" || status === "CANCELLED") && order?.tableId) {
+      if ((status === "SERVED" || status === "COMPLETED" || status === "CANCELLED") && existingOrder?.tableId) {
         const otherOrders = await tx.order.count({
           where: {
-            tableId: order.tableId,
+            tableId: existingOrder.tableId,
             id: { not: id },
             status: { in: ["PENDING", "RECEIVED", "PREPARING", "READY"] },
           },
@@ -80,7 +107,7 @@ export async function PATCH(
 
         if (otherOrders === 0) {
           await tx.table.update({
-            where: { id: order.tableId },
+            where: { id: existingOrder.tableId },
             data: { status: "AVAILABLE", currentOrderId: null },
           });
         }

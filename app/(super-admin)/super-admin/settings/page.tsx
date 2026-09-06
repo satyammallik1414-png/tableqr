@@ -13,6 +13,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function PlatformSettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [feeSaving, setFeeSaving] = useState(false);
+  const [defaultPlatformFee, setDefaultPlatformFee] = useState("0");
+  const [restaurantId, setRestaurantId] = useState("");
+  const [restaurantFee, setRestaurantFee] = useState("0");
+  const [restaurants, setRestaurants] = useState<Array<{ id: string; name: string }>>([]);
+  const [feeOverrides, setFeeOverrides] = useState<Record<string, number>>({});
   const [settings, setSettings] = useState({
     platformName: "SmartServe AI",
     supportEmail: "support@smartserve.ai",
@@ -29,8 +35,8 @@ export default function PlatformSettingsPage() {
   const fetchSettings = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/super-admin/settings");
-      const json = await res.json();
+      const [res, feeRes] = await Promise.all([fetch("/api/super-admin/settings"), fetch("/api/super-admin/platform-fees")]);
+      const [json, feeJson] = await Promise.all([res.json(), feeRes.json()]);
       if (json.success && json.data.length > 0) {
         const map: any = {};
         json.data.forEach((s: any) => {
@@ -38,11 +44,33 @@ export default function PlatformSettingsPage() {
         });
         setSettings((prev) => ({ ...prev, ...map }));
       }
+      if (feeJson.success) {
+        setDefaultPlatformFee(String(feeJson.data.defaultFee ?? 0));
+        setRestaurants(feeJson.data.restaurants ?? []);
+        setFeeOverrides(feeJson.data.overrides ?? {});
+      }
     } catch {
       toast.error("Failed to load platform settings");
     } finally {
       setLoading(false);
     }
+  };
+
+  const savePlatformFee = async (scope: "all" | "restaurant") => {
+    const amount = Number(scope === "all" ? defaultPlatformFee : restaurantFee);
+    if (!Number.isFinite(amount) || amount < 0 || (scope === "restaurant" && !restaurantId)) {
+      toast.error(scope === "restaurant" && !restaurantId ? "Select a restaurant" : "Enter a valid fee amount");
+      return;
+    }
+    setFeeSaving(true);
+    try {
+      const response = await fetch("/api/super-admin/platform-fees", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ scope, restaurantId: scope === "restaurant" ? restaurantId : undefined, amount }) });
+      const result = await response.json();
+      if (!result.success) throw new Error(result.error || "Failed to save platform fee");
+      if (scope === "restaurant") setFeeOverrides((current) => ({ ...current, [restaurantId]: amount }));
+      toast.success(scope === "all" ? "Default platform fee updated for all restaurants" : "Restaurant platform fee override updated");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "Failed to save platform fee"); }
+    finally { setFeeSaving(false); }
   };
 
   const handleSaveSetting = async (key: string, value: any, description: string) => {
@@ -106,6 +134,25 @@ export default function PlatformSettingsPage() {
           <Save className="mr-2 h-4 w-4" /> {saving ? "Saving..." : "Save Settings"}
         </Button>
       </div>
+
+      {/* Card 1: Branding & Support */}
+      <Card className="rounded-2xl border-blue-200 bg-white shadow-xs dark:border-blue-900 dark:bg-gray-950">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base font-bold"><DollarSign className="h-5 w-5 text-blue-600" /> Platform Fee per Order</CardTitle>
+          <p className="text-xs text-gray-500">Set one fixed fee for every restaurant, or override it for an individual restaurant. Only Super Admin can change these amounts.</p>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid gap-3 rounded-xl border border-gray-200 p-4 sm:grid-cols-[1fr_auto] sm:items-end">
+            <div className="space-y-1"><Label htmlFor="default-platform-fee">Default fee for all restaurants (₹ per order)</Label><Input id="default-platform-fee" type="number" min="0" step="0.01" value={defaultPlatformFee} onChange={(event) => setDefaultPlatformFee(event.target.value)} /></div>
+            <Button disabled={feeSaving} onClick={() => savePlatformFee("all")}>Save global fee</Button>
+          </div>
+          <div className="grid gap-3 rounded-xl border border-gray-200 p-4 sm:grid-cols-2">
+            <div className="space-y-1"><Label htmlFor="fee-restaurant">Individual restaurant override</Label><select id="fee-restaurant" value={restaurantId} onChange={(event) => { const id = event.target.value; setRestaurantId(id); setRestaurantFee(String(feeOverrides[id] ?? defaultPlatformFee)); }} className="h-11 w-full rounded-xl border border-gray-200 bg-white px-3 text-sm"><option value="">Select restaurant</option>{restaurants.map((restaurant) => <option key={restaurant.id} value={restaurant.id}>{restaurant.name}</option>)}</select></div>
+            <div className="space-y-1"><Label htmlFor="restaurant-platform-fee">Fee for selected restaurant (₹ per order)</Label><Input id="restaurant-platform-fee" type="number" min="0" step="0.01" value={restaurantFee} onChange={(event) => setRestaurantFee(event.target.value)} /></div>
+            <div className="sm:col-span-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs text-gray-500">{restaurantId && feeOverrides[restaurantId] !== undefined ? `Current override: ₹${feeOverrides[restaurantId].toFixed(2)}` : "Without an override, the global fee applies."}</p><Button disabled={feeSaving || !restaurantId} onClick={() => savePlatformFee("restaurant")}>Save restaurant fee</Button></div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Card 1: Branding & Support */}
       <Card className="rounded-2xl border-gray-200/80 bg-white shadow-xs dark:border-gray-800 dark:bg-gray-950">

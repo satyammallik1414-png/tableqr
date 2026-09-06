@@ -85,6 +85,11 @@ interface CustomerMenuProps {
     cashEnabled?: boolean;
     cardEnabled?: boolean;
   };
+  taxSettings?: {
+    cgst?: number;
+    sgst?: number;
+    platformFee?: number;
+  };
 }
 
 interface CartItemEntry {
@@ -107,12 +112,15 @@ export function CustomerMenu({
   availableTables = [],
   categories: initialCategories,
   paymentSettings: initialPaymentSettings,
+  taxSettings,
 }: CustomerMenuProps) {
   const router = useRouter();
   const orderIdempotencyKey = useRef<string | null>(null);
+  const menuRefreshController = useRef<AbortController | null>(null);
+  const menuRefreshInFlight = useRef(false);
 
   const paymentSettings = initialPaymentSettings || {
-    collectPaymentUpfront: true,
+    collectPaymentUpfront: false,
     upiEnabled: true,
     upiId: "smartserve@upi",
     payeeName: restaurant.name || "SmartServe Restaurant",
@@ -155,7 +163,7 @@ export function CustomerMenu({
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [selectedPaymentMethod, setSelectedPaymentMethod] = useState<"UPI" | "CASH" | "CARD">("UPI");
   const [paymentQrTab, setPaymentQrTab] = useState<"DYNAMIC" | "CUSTOM">(
-    paymentSettings?.qrDisplayMode === "CUSTOM" && paymentSettings?.qrImageUrl ? "CUSTOM" : "DYNAMIC"
+    paymentSettings?.qrImageUrl ? "CUSTOM" : "DYNAMIC"
   );
   const [paymentReference, setPaymentReference] = useState("");
   const [isConfirmedModalOpen, setIsConfirmedModalOpen] = useState(false);
@@ -280,19 +288,40 @@ export function CustomerMenu({
   // Live menu refetch function (bypasses browser and server caches)
   const refetchMenu = useCallback(async (isSilent = false) => {
     if (!qrData?.token) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      if (!isSilent) toast.error("You are offline. Showing the last loaded menu.");
+      return;
+    }
+    if (menuRefreshInFlight.current) return;
+
+    menuRefreshInFlight.current = true;
     if (!isSilent) setIsRefreshing(true);
+    const controller = new AbortController();
+    menuRefreshController.current = controller;
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
     try {
       const res = await fetch(`/api/qr/${qrData.token}?t=${Date.now()}`, {
         cache: "no-store",
         headers: { "Cache-Control": "no-cache" },
+        signal: controller.signal,
       });
+      if (!res.ok) throw new Error(`Menu refresh returned ${res.status}`);
+      const contentType = res.headers.get("content-type") || "";
+      if (!contentType.includes("application/json")) throw new Error("Menu refresh returned an invalid response");
       const json = await res.json();
       if (json.success && json.data?.categories) {
         setCategories(json.data.categories);
       }
     } catch (err) {
-      console.error("Failed to refresh menu:", err);
+      // Background refresh failures are expected on unstable mobile networks.
+      // Keep the last safe menu instead of showing a runtime error overlay.
+      if (!isSilent && !(err instanceof DOMException && err.name === "AbortError")) {
+        toast.error("Could not refresh the menu. Showing the last loaded version.");
+      }
     } finally {
+      window.clearTimeout(timeout);
+      if (menuRefreshController.current === controller) menuRefreshController.current = null;
+      menuRefreshInFlight.current = false;
       if (!isSilent) setIsRefreshing(false);
     }
   }, [qrData?.token]);
@@ -312,29 +341,35 @@ export function CustomerMenu({
   // Refetch when page becomes visible or window is focused
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && navigator.onLine) {
         refetchMenu(true);
       }
     };
     const handleFocus = () => {
-      refetchMenu(true);
+      if (navigator.onLine) refetchMenu(true);
     };
+    const handleOnline = () => refetchMenu(true);
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("focus", handleFocus);
+    window.addEventListener("online", handleOnline);
 
     return () => {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("online", handleOnline);
     };
   }, [refetchMenu]);
 
-  // Background polling every 10 seconds to ensure live updates without requiring customer reload
+  // Poll only while the page is visible and connected. Focus/online events refresh immediately.
   useEffect(() => {
     const interval = setInterval(() => {
-      refetchMenu(true);
-    }, 10000);
-    return () => clearInterval(interval);
+      if (document.visibilityState === "visible" && navigator.onLine) refetchMenu(true);
+    }, 30000);
+    return () => {
+      clearInterval(interval);
+      menuRefreshController.current?.abort();
+    };
   }, [refetchMenu]);
 
   // Persistent guest details
@@ -483,10 +518,15 @@ export function CustomerMenu({
   };
 
   // Cart calculations
+  const cgstRate = typeof taxSettings?.cgst === "number" ? taxSettings.cgst : (Number(taxSettings?.cgst) || 0);
+  const sgstRate = typeof taxSettings?.sgst === "number" ? taxSettings.sgst : (Number(taxSettings?.sgst) || 0);
+  const totalTaxRatePercent = Math.max(0, cgstRate + sgstRate);
+  const platformFee = typeof taxSettings?.platformFee === "number" ? Math.max(0, taxSettings.platformFee) : 0;
+
   const totalItemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const cartSubtotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const cartTax = Number((cartSubtotal * 0.05).toFixed(2));
-  const cartTotal = Number((cartSubtotal + cartTax).toFixed(2));
+  const cartTax = totalTaxRatePercent > 0 ? Number(((cartSubtotal * totalTaxRatePercent) / 100).toFixed(2)) : 0;
+  const cartTotal = Number((cartSubtotal + cartTax + platformFee).toFixed(2));
 
   // Step 1: Proceed to Payment from Cart
   const handleProceedToPayment = () => {
@@ -625,6 +665,37 @@ export function CustomerMenu({
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  // Step 2b: Direct Order Placement (Pay after restaurant accepts order)
+  const handlePlaceOrderDirectly = () => {
+    if (cart.length === 0) return;
+
+    if (!customerName.trim()) {
+      setSubmitError("Please enter your name to proceed.");
+      return;
+    }
+    if (!customerPhone.trim()) {
+      setSubmitError("Please enter your phone number.");
+      return;
+    }
+
+    if (qrData.type === "RESTAURANT_MENU" && orderType === "DINE_IN" && !selectedTableId) {
+      if (availableTables.length > 0) {
+        setSelectedTableId(availableTables[0].id);
+      }
+    }
+
+    try {
+      localStorage.setItem("smartserve_guest_name", customerName);
+      localStorage.setItem("smartserve_guest_phone", customerPhone);
+    } catch {
+      // Ignore localStorage errors
+    }
+
+    setSubmitError(null);
+    setIsCartOpen(false);
+    handleExecuteOrderSubmit("CASH", "PENDING", "");
   };
 
   return (
@@ -1042,7 +1113,7 @@ export function CustomerMenu({
                   </div>
                   <div className="text-base font-bold text-white leading-tight">
                     {formatCurrency(cartTotal)}
-                    <span className="text-[11px] font-normal text-gray-400 ml-1">incl. tax</span>
+                    <span className="text-[11px] font-normal text-gray-400 ml-1">incl. tax & platform fee</span>
                   </div>
                 </div>
               </div>
@@ -1315,9 +1386,15 @@ export function CustomerMenu({
               <span>Item Subtotal</span>
               <span className="font-semibold text-gray-900">{formatCurrency(cartSubtotal)}</span>
             </div>
+            {totalTaxRatePercent > 0 && (
+              <div className="flex justify-between text-gray-600">
+                <span>Taxes & GST ({totalTaxRatePercent}%)</span>
+                <span className="font-semibold text-gray-900">{formatCurrency(cartTax)}</span>
+              </div>
+            )}
             <div className="flex justify-between text-gray-600">
-              <span>Taxes & GST (5%)</span>
-              <span className="font-semibold text-gray-900">{formatCurrency(cartTax)}</span>
+              <span>Platform fee per order</span>
+              <span className="font-semibold text-gray-900">{formatCurrency(platformFee)}</span>
             </div>
             <div className="flex justify-between font-bold text-sm text-gray-900 border-t border-gray-200 pt-2.5">
               <span>Total Payable</span>
@@ -1335,11 +1412,7 @@ export function CustomerMenu({
           {/* Proceed / Submit Button */}
           <button
             type="button"
-            onClick={
-              paymentSettings?.collectPaymentUpfront !== false
-                ? handleProceedToPayment
-                : () => handleExecuteOrderSubmit("CASH", "PENDING", "")
-            }
+            onClick={handlePlaceOrderDirectly}
             disabled={isSubmitting || cart.length === 0}
             className="w-full h-11 rounded-xl bg-gray-900 hover:bg-gray-800 disabled:opacity-50 text-white font-bold text-xs shadow-md transition-all active:scale-95 flex items-center justify-center gap-2 cursor-pointer"
           >
@@ -1348,7 +1421,7 @@ export function CustomerMenu({
                 <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 Processing Order...
               </span>
-            ) : paymentSettings?.collectPaymentUpfront !== false ? (
+            ) : paymentSettings?.collectPaymentUpfront === true ? (
               <span className="flex items-center gap-1.5">
                 <span>Proceed to Payment</span>
                 <span>•</span>
@@ -1356,7 +1429,12 @@ export function CustomerMenu({
                 <ChevronRight className="h-4 w-4" />
               </span>
             ) : (
-              <span>Place Order • {formatCurrency(cartTotal)}</span>
+              <span className="flex items-center gap-1.5">
+                <span>Place Order</span>
+                <span>•</span>
+                <span>{formatCurrency(cartTotal)}</span>
+                <ChevronRight className="h-4 w-4" />
+              </span>
             )}
           </button>
         </DialogContent>
@@ -1398,8 +1476,14 @@ export function CustomerMenu({
               </div>
               <div className="flex items-center justify-center gap-2 text-[11px] text-emerald-700">
                 <span>Subtotal: {formatCurrency(cartSubtotal)}</span>
+                {totalTaxRatePercent > 0 && (
+                  <>
+                    <span>•</span>
+                    <span>GST ({totalTaxRatePercent}%): {formatCurrency(cartTax)}</span>
+                  </>
+                )}
                 <span>•</span>
-                <span>GST (5%): {formatCurrency(cartTax)}</span>
+                <span>Platform fee: {formatCurrency(platformFee)}</span>
               </div>
             </div>
 
@@ -1666,10 +1750,12 @@ export function CustomerMenu({
 
           <div className="space-y-1">
             <DialogTitle className="text-xl font-extrabold text-slate-900 font-heading">
-              Order Confirmed!
+              {confirmedOrder?.paymentStatus === "PAID" ? "Order Confirmed!" : "Order Sent to Kitchen!"}
             </DialogTitle>
             <p className="text-xs text-slate-500">
-              Your order has been sent to the kitchen and will be prepared shortly.
+              {confirmedOrder?.paymentStatus === "PAID"
+                ? "Your order has been paid and will be prepared shortly."
+                : "Your order has been placed. You can complete your payment once the restaurant accepts your order."}
             </p>
           </div>
 
@@ -1696,7 +1782,7 @@ export function CustomerMenu({
                       : "bg-amber-500 text-white"
                   }`}
                 >
-                  {confirmedOrder.paymentStatus === "PAID" ? "PAID" : "PAY AT COUNTER"}
+                  {confirmedOrder.paymentStatus === "PAID" ? "PAID" : "PAY AFTER ACCEPTANCE"}
                 </Badge>
               </div>
               {confirmedOrder.table && (

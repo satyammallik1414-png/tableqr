@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { getPlatformFee } from "@/lib/platform-fee";
 
 export async function getQRDataByToken(token: string) {
   if (!token) return { error: "QR token is required" };
@@ -91,21 +92,28 @@ export async function getQRDataByToken(token: string) {
     }
 
     // Fetch restaurant payment settings
-    let settingRecord = await prisma.platformSetting.findUnique({
+    const settingRecord = await prisma.platformSetting.findUnique({
       where: { key: `settings_${qrRecord.businessId}` },
     });
 
-    if (!settingRecord) {
-      settingRecord = await prisma.platformSetting.findFirst({
-        where: { key: { startsWith: "settings_" } },
-        orderBy: { updatedAt: "desc" },
-      });
-    }
+    const platformFee = await getPlatformFee(qrRecord.businessId);
+    const rawTax = (settingRecord?.value as any)?.tax;
+    const taxSettings = rawTax !== undefined
+      ? {
+          cgst: typeof rawTax?.cgst === "number" ? rawTax.cgst : (Number(rawTax?.cgst) || 0),
+          sgst: typeof rawTax?.sgst === "number" ? rawTax.sgst : (Number(rawTax?.sgst) || 0),
+          platformFee,
+        }
+      : {
+          cgst: 2.5,
+          sgst: 2.5,
+          platformFee,
+        };
 
     const rawPayment = (settingRecord?.value as any)?.payment;
     const paymentSettings = rawPayment
       ? {
-          collectPaymentUpfront: true,
+          collectPaymentUpfront: false,
           upiEnabled: true,
           upiId: "smartserve@upi",
           payeeName: qrRecord.business.name || "SmartServe Restaurant",
@@ -116,7 +124,7 @@ export async function getQRDataByToken(token: string) {
           ...rawPayment,
         }
       : {
-          collectPaymentUpfront: true,
+          collectPaymentUpfront: false,
           upiEnabled: true,
           upiId: "smartserve@upi",
           payeeName: qrRecord.business.name || "SmartServe Restaurant",
@@ -139,6 +147,7 @@ export async function getQRDataByToken(token: string) {
         availableTables,
         categories: JSON.parse(JSON.stringify(categories)),
         paymentSettings,
+        taxSettings,
       },
     };
   } catch (err: unknown) {
@@ -174,4 +183,3 @@ export async function revalidateBranchQRCodes(branchId: string) {
     console.error("revalidateBranchQRCodes error:", err);
   }
 }
-

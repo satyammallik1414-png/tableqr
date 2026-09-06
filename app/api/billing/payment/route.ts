@@ -1,7 +1,14 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-export async function POST(request: Request) {
+export async function POST() {
+  return NextResponse.json(
+    { success: false, error: "Payment system is temporarily unavailable." },
+    { status: 410 },
+  );
+}
+
+async function legacyPaymentPOST(request: Request) {
   try {
     const body = await request.json();
     const { billId, method, amount, reference } = body;

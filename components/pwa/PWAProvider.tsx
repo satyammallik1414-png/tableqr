@@ -48,7 +48,20 @@ export function PWAProvider() {
     <div className={`network-status network-${sync}`} role="status" aria-live="polite"><Icon className={sync === "syncing" ? "animate-spin" : ""} />{labels[sync]}</div>
     {installEvent && !dismissed && <div className="install-banner" role="dialog" aria-label="Install SmartServe AI">
       <div><strong>SmartServe AI</strong><p>Install for faster access and reliable ordering.</p></div>
-      <button onClick={async () => { await installEvent.prompt(); await installEvent.userChoice; setInstallEvent(null); }}><Download />Install App</button>
+      <button
+        onClick={async () => {
+          try {
+            await installEvent.prompt();
+            await installEvent.userChoice;
+          } catch (err) {
+            console.warn("PWA prompt error:", err);
+          } finally {
+            setInstallEvent(null);
+          }
+        }}
+      >
+        <Download />Install App
+      </button>
       <button className="install-later" onClick={() => { localStorage.setItem("smartserve-install-dismissed", "1"); setDismissed(true); }}>Not now</button>
     </div>}
   </>;

@@ -29,18 +29,19 @@ export default function SettingsPage() {
   const qrFileInputRef = useRef<HTMLInputElement>(null);
 
   const [restaurant, setRestaurant] = useState({
-    name: "SmartServe AI",
-    email: "admin@smartserve.ai",
-    phone: "+91 98765 43210",
-    address: "123, Restaurant Street, Mumbai - 400001",
-    gst: "00AAAAA0000A1Z5",
+    name: "",
+    email: "",
+    phone: "",
+    address: "",
+    gst: "",
   });
 
   const [tax, setTax] = useState({
     cgst: 2.5,
     sgst: 2.5,
-    serviceCharge: 10,
   });
+  const [platformFee, setPlatformFee] = useState(0);
+  const [paymentGateway, setPaymentGateway] = useState({ enabled: false, provider: "razorpay", configured: false });
 
   const [prefs, setPrefs] = useState({
     notifications: true,
@@ -49,7 +50,7 @@ export default function SettingsPage() {
   });
 
   const [payment, setPayment] = useState({
-    collectPaymentUpfront: true,
+    collectPaymentUpfront: false,
     upiEnabled: true,
     upiId: "smartserve@upi",
     payeeName: "SmartServe Restaurant",
@@ -66,17 +67,18 @@ export default function SettingsPage() {
         const json = await res.json();
         if (json.success && json.data) {
           if (json.data.restaurant) {
-            setRestaurant((prev) => ({
-              ...prev,
-              name: json.data.restaurant.name || prev.name,
-              email: json.data.restaurant.email || prev.email,
-              phone: json.data.restaurant.phone || prev.phone,
-              address: json.data.restaurant.address || prev.address,
-              gst: json.data.restaurant.gstNumber || prev.gst,
-            }));
+            setRestaurant({
+              name: json.data.restaurant.name || "",
+              email: json.data.restaurant.email || "",
+              phone: json.data.restaurant.phone || "",
+              address: json.data.restaurant.address || "",
+              gst: json.data.restaurant.gstNumber || "",
+            });
           }
           if (json.data.tax) setTax(json.data.tax);
+          if (typeof json.data.platformFee === "number") setPlatformFee(json.data.platformFee);
           if (json.data.prefs) setPrefs(json.data.prefs);
+          if (json.data.paymentGateway) setPaymentGateway(json.data.paymentGateway);
           if (json.data.payment) {
             setPayment((prev) => ({
               ...prev,
@@ -101,55 +103,81 @@ export default function SettingsPage() {
 
     if (file.size > 5 * 1024 * 1024) {
       toast.error("QR Code image must be smaller than 5MB");
+      e.target.value = "";
       return;
     }
 
     const reader = new FileReader();
+    reader.onerror = () => {
+      toast.error("Failed to read the selected image file");
+    };
+
     reader.onload = (event) => {
-      const img = new Image();
+      const dataUrl = event.target?.result as string;
+      if (!dataUrl) return;
+
+      if (typeof window === "undefined") return;
+      const img = new window.Image();
+
+      img.onerror = () => {
+        toast.error("Could not process this image. Please upload a standard PNG or JPG.");
+      };
+
       img.onload = () => {
-        // Compress/resize canvas image to max 800x800 for optimal performance
-        const canvas = document.createElement("canvas");
-        const MAX_WIDTH = 800;
-        const MAX_HEIGHT = 800;
-        let width = img.width;
-        let height = img.height;
+        try {
+          // Compress/resize canvas image to max 800x800 for optimal performance
+          const canvas = document.createElement("canvas");
+          const MAX_WIDTH = 800;
+          const MAX_HEIGHT = 800;
+          let width = img.width;
+          let height = img.height;
 
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height = Math.round((height * MAX_WIDTH) / width);
-            width = MAX_WIDTH;
+          if (width > height) {
+            if (width > MAX_WIDTH) {
+              height = Math.round((height * MAX_WIDTH) / width);
+              width = MAX_WIDTH;
+            }
+          } else {
+            if (height > MAX_HEIGHT) {
+              width = Math.round((width * MAX_HEIGHT) / height);
+              height = MAX_HEIGHT;
+            }
           }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width = Math.round((width * MAX_HEIGHT) / height);
-            height = MAX_HEIGHT;
-          }
-        }
 
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(img, 0, 0, width, height);
-          const compressedDataUrl = canvas.toDataURL("image/png", 0.9);
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.drawImage(img, 0, 0, width, height);
+            const compressedDataUrl = canvas.toDataURL("image/png", 0.9);
+            setPayment((prev) => ({
+              ...prev,
+              qrImageUrl: compressedDataUrl,
+            }));
+            toast.success("Payment QR Code uploaded successfully!");
+          } else {
+            setPayment((prev) => ({
+              ...prev,
+              qrImageUrl: dataUrl,
+            }));
+            toast.success("Payment QR Code uploaded successfully!");
+          }
+        } catch (compressErr) {
+          console.error("Image processing error:", compressErr);
           setPayment((prev) => ({
             ...prev,
-            qrImageUrl: compressedDataUrl,
-          }));
-          toast.success("Payment QR Code uploaded successfully!");
-        } else {
-          const rawBase64 = event.target?.result as string;
-          setPayment((prev) => ({
-            ...prev,
-            qrImageUrl: rawBase64,
+            qrImageUrl: dataUrl,
           }));
           toast.success("Payment QR Code uploaded successfully!");
         }
       };
-      img.src = event.target?.result as string;
+
+      img.src = dataUrl;
     };
+
     reader.readAsDataURL(file);
+    // Reset file input so user can re-upload same file if desired
+    e.target.value = "";
   };
 
   const handleRemoveQrImage = () => {
@@ -174,13 +202,14 @@ export default function SettingsPage() {
           tax,
           prefs,
           payment,
+          paymentGateway,
         }),
       });
       const json = await res.json();
       if (!json.success) {
         throw new Error(json.error || "Failed to save settings");
       }
-      toast.success("Settings and payment methods saved successfully!");
+      toast.success("Settings saved successfully!");
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : "Failed to save settings");
     } finally {
@@ -208,8 +237,19 @@ export default function SettingsPage() {
           </Button>
         </div>
 
+        <Card className="border-emerald-200 shadow-xs">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base"><ShieldCheck className="h-5 w-5 text-emerald-600" /> Secure online payment</CardTitle>
+            <CardDescription>Request Razorpay payment only after you accept an order. Preparation starts only after server verification.</CardDescription>
+          </CardHeader>
+          <CardContent className="flex items-center justify-between gap-4">
+            <div><p className="text-sm font-semibold">Razorpay (INR)</p><p className="text-xs text-slate-500">{paymentGateway.configured ? "Server credentials configured" : "Add Razorpay environment variables before enabling"}</p></div>
+            <Switch checked={paymentGateway.enabled} disabled={!paymentGateway.configured} onCheckedChange={(enabled) => setPaymentGateway({ ...paymentGateway, enabled })} />
+          </CardContent>
+        </Card>
+
         {/* Payment Methods & Customer Checkout */}
-        <Card className="border-emerald-200/80 shadow-xs overflow-hidden">
+        <Card className="hidden border-emerald-200/80 shadow-xs overflow-hidden" aria-hidden="true">
           <CardHeader className="bg-emerald-50/60 border-b border-emerald-100">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2.5">
@@ -234,10 +274,10 @@ export default function SettingsPage() {
               <div className="space-y-0.5">
                 <Label className="text-sm font-bold text-slate-900 flex items-center gap-1.5">
                   <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                  Collect Payment Before Place Order
+                  Collect Payment Before Placing Order (Upfront)
                 </Label>
                 <p className="text-xs text-slate-600">
-                  When enabled, customers see the Payment screen before placing order. Once paid, the order confirmation screen opens.
+                  When disabled (recommended), customers place orders first. Payment is requested on the live tracking page after the restaurant accepts the order.
                 </p>
               </div>
               <Switch
@@ -379,15 +419,12 @@ export default function SettingsPage() {
                             <p className="text-xs font-bold text-slate-700">Click to upload Payment QR Code image</p>
                             <p className="text-[11px] text-slate-400">Supports GPay, PhonePe, Paytm, BHIM QR codes (PNG, JPG up to 5MB)</p>
                           </div>
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            className="mt-3 text-xs h-8 font-semibold bg-white border border-slate-200 text-slate-700 shadow-2xs group-hover:border-blue-300"
+                          <span
+                            className="mt-3 inline-flex items-center text-xs h-8 px-3 rounded-lg font-semibold bg-white border border-slate-200 text-slate-700 shadow-2xs group-hover:border-blue-300 pointer-events-none"
                           >
                             <Upload className="h-3.5 w-3.5 mr-1.5 text-blue-600" />
                             Upload Payment QR
-                          </Button>
+                          </span>
                         </div>
                       )}
 
@@ -560,13 +597,15 @@ export default function SettingsPage() {
               />
             </div>
             <div className="space-y-2">
-              <Label>Service Charge (%)</Label>
+              <Label>Platform Fee per Order</Label>
               <Input
                 type="number"
-                step="0.1"
-                value={tax.serviceCharge}
-                onChange={(e) => setTax({ ...tax, serviceCharge: Number(e.target.value) })}
+                value={platformFee}
+                readOnly
+                disabled
+                aria-describedby="platform-fee-help"
               />
+              <p id="platform-fee-help" className="text-[11px] text-slate-500">Fixed by SmartServe Super Admin. Restaurant users cannot edit this fee.</p>
             </div>
           </CardContent>
         </Card>

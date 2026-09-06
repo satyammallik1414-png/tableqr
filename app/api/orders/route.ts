@@ -5,6 +5,7 @@ import { orderSchema } from "@/lib/validations";
 import type { Prisma } from "@prisma/client";
 import { requireFeatureAccess } from "@/lib/features";
 import { generateOrderNumber } from "@/lib/qr-utils";
+import { getPlatformFee } from "@/lib/platform-fee";
 
 export async function POST(request: Request) {
   try {
@@ -18,7 +19,11 @@ export async function POST(request: Request) {
       );
     }
 
-    const { tableId, branchId, items, subtotal, tax, serviceCharge, total, notes, couponCode } = parsed.data;
+    const { tableId, branchId, items, subtotal, tax, notes, couponCode } = parsed.data;
+    const branch = await prisma.branch.findUnique({ where: { id: branchId }, select: { restaurantId: true } });
+    if (!branch) return NextResponse.json({ success: false, error: "Branch not found" }, { status: 404 });
+    const platformFee = await getPlatformFee(branch.restaurantId);
+    const total = Math.round((subtotal + tax + platformFee) * 100) / 100;
 
     const orderNumber = generateOrderNumber();
     const now = new Date();
@@ -32,7 +37,7 @@ export async function POST(request: Request) {
         items: items as unknown as Prisma.InputJsonValue,
         subtotal,
         tax,
-        serviceCharge,
+        serviceCharge: platformFee,
         discount: 0,
         total,
         notes,
@@ -106,6 +111,62 @@ export async function GET(request: Request) {
       } else {
         where.status = status;
       }
+    }
+
+    const now = new Date();
+    // Auto-complete accepted orders when their restaurant-set timer expires.
+    const overdueOrders = await prisma.order.findMany({
+      where: {
+        status: { in: ["PREPARING", "RECEIVED", "READY"] },
+      },
+      select: {
+        id: true,
+        estimatedReadyAt: true,
+        acceptedAt: true,
+        estimatedReadyMinutes: true,
+        createdAt: true,
+      },
+    });
+
+    const completedOrderIds = overdueOrders
+      .filter((o) => {
+        if (o.estimatedReadyAt && o.estimatedReadyAt <= now) return true;
+        const baseTime = o.acceptedAt || o.createdAt;
+        if (baseTime && o.estimatedReadyMinutes) {
+          const target = new Date(baseTime.getTime() + o.estimatedReadyMinutes * 60000);
+          return target <= now;
+        }
+        return false;
+      })
+      .map((o) => o.id);
+
+    if (completedOrderIds.length > 0) {
+      await prisma.$transaction(async (tx) => {
+        await tx.order.updateMany({
+          where: { id: { in: completedOrderIds } },
+          data: { status: "COMPLETED", lastUpdatedAt: now },
+        });
+        await tx.orderItem.updateMany({
+          where: { orderId: { in: completedOrderIds } },
+          data: { status: "COMPLETED" },
+        });
+        for (const orderId of completedOrderIds) {
+          await tx.orderStatusHistory.create({
+            data: {
+              orderId,
+              status: "COMPLETED",
+              note: "Preparation countdown completed. Order completed automatically.",
+              changedBy: "System (Auto-Timer)",
+            },
+          });
+        }
+        const completedTables = await tx.order.findMany({ where: { id: { in: completedOrderIds }, tableId: { not: null } }, select: { tableId: true } });
+        for (const { tableId } of completedTables) {
+          if (!tableId) continue;
+          const active = await tx.order.count({ where: { tableId, id: { notIn: completedOrderIds }, status: { in: ["PENDING", "ACCEPTED", "RECEIVED", "PREPARING", "READY", "SERVED"] } } });
+          if (active === 0) await tx.table.update({ where: { id: tableId }, data: { status: "AVAILABLE", currentOrderId: null } });
+        }
+      });
     }
 
     const orders = await prisma.order.findMany({

@@ -2,6 +2,8 @@ import { CustomerMenu } from "@/components/order/CustomerMenu";
 import { getQRDataByToken } from "@/lib/qr-data";
 import { AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { auth } from "@/lib/auth";
+import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -13,6 +15,8 @@ interface PageProps {
 
 export default async function RestaurantQRPage({ params }: PageProps) {
   const { token } = await params;
+  const session = await auth();
+  if (!session?.user) redirect(`/customer/register?callbackUrl=${encodeURIComponent(`/order/restaurant/${token}`)}`);
   const result = await getQRDataByToken(token);
 
   if (result.error || !result.data) {
@@ -36,7 +40,7 @@ export default async function RestaurantQRPage({ params }: PageProps) {
     );
   }
 
-  const { qr, restaurant, branch, availableTables, categories, paymentSettings } = result.data;
+  const { qr, restaurant, branch, availableTables, categories, paymentSettings, taxSettings } = result.data;
 
   return (
     <CustomerMenu
@@ -46,6 +50,7 @@ export default async function RestaurantQRPage({ params }: PageProps) {
       availableTables={availableTables}
       categories={categories}
       paymentSettings={paymentSettings}
+      taxSettings={taxSettings}
     />
   );
 }

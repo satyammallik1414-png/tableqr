@@ -17,23 +17,38 @@ export function QRGenerator({
   size = 200,
 }: QRGeneratorProps) {
   const downloadQR = () => {
-    const svg = document.getElementById("qr-code-svg") as unknown as SVGElement;
-    if (!svg) return;
-    const svgData = new XMLSerializer().serializeToString(svg);
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
-    img.onload = () => {
-      canvas.width = size;
-      canvas.height = size;
-      ctx?.drawImage(img, 0, 0);
-      const png = canvas.toDataURL("image/png");
-      const link = document.createElement("a");
-      link.download = `qr-${title?.toLowerCase().replace(/\s+/g, "-") || "code"}.png`;
-      link.href = png;
-      link.click();
-    };
-    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+    try {
+      const svg = document.getElementById("qr-code-svg") as unknown as SVGElement;
+      if (!svg) return;
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (typeof window === "undefined") return;
+      const img = new window.Image();
+
+      img.onerror = () => {
+        console.error("Failed to load SVG for QR download");
+      };
+
+      img.onload = () => {
+        try {
+          canvas.width = size;
+          canvas.height = size;
+          ctx?.drawImage(img, 0, 0);
+          const png = canvas.toDataURL("image/png");
+          const link = document.createElement("a");
+          link.download = `qr-${title?.toLowerCase().replace(/\s+/g, "-") || "code"}.png`;
+          link.href = png;
+          link.click();
+        } catch (canvasErr) {
+          console.error("Canvas draw error:", canvasErr);
+        }
+      };
+
+      img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+    } catch (err) {
+      console.error("Download QR error:", err);
+    }
   };
 
   const printQR = () => {

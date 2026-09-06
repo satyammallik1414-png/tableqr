@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { billSchema } from "@/lib/validations";
 import { generateBillNumber } from "@/lib/utils";
+import { getPlatformFee } from "@/lib/platform-fee";
 
 export async function POST(request: Request) {
   try {
@@ -15,11 +16,14 @@ export async function POST(request: Request) {
       );
     }
 
-    const { orderId, discount, serviceCharge, paymentMethod, splitCount, notes } = parsed.data;
+    const { orderId, discount, paymentMethod, splitCount, notes } = parsed.data;
 
     const order = await prisma.order.findUnique({
       where: { id: orderId },
-      include: { orderItems: true },
+      include: {
+        orderItems: true,
+        branch: { select: { restaurantId: true } },
+      },
     });
 
     if (!order) {
@@ -30,10 +34,21 @@ export async function POST(request: Request) {
     }
 
     const subtotal = order.subtotal;
-    const taxRate = 0.05;
-    const taxAmount = subtotal * taxRate;
 
-    const total = subtotal + taxAmount + serviceCharge - discount;
+    // Retrieve restaurant tax settings
+    let taxRate = 0;
+    const settingRecord = await prisma.platformSetting.findUnique({
+      where: { key: `settings_${order.branch?.restaurantId}` },
+    });
+    const savedTax = (settingRecord?.value as any)?.tax;
+    if (savedTax !== undefined) {
+      const cgst = typeof savedTax?.cgst === "number" ? savedTax.cgst : (Number(savedTax?.cgst) || 0);
+      const sgst = typeof savedTax?.sgst === "number" ? savedTax.sgst : (Number(savedTax?.sgst) || 0);
+      taxRate = Math.max(0, (cgst + sgst) / 100);
+    }
+    const taxAmount = Math.round(subtotal * taxRate * 100) / 100;
+    const platformFee = await getPlatformFee(order.branch?.restaurantId);
+    const total = Math.round((subtotal + taxAmount + platformFee - discount) * 100) / 100;
 
     const bill = await prisma.bill.create({
       data: {
@@ -41,7 +56,7 @@ export async function POST(request: Request) {
         billNumber: generateBillNumber(),
         subtotal,
         taxAmount,
-        serviceCharge,
+        serviceCharge: platformFee,
         discount,
         total,
         paymentMethod,

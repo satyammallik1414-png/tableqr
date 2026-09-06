@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { generateOrderNumber } from "@/lib/qr-utils";
 import { customerOrderSubmitSchema } from "@/lib/validations";
 import { DEFAULT_TAX_RATES } from "@/lib/constants";
+import { getPlatformFee } from "@/lib/platform-fee";
+import { isRazorpayConfigured } from "@/lib/payments";
 
 export async function POST(request: Request) {
   try {
@@ -32,15 +34,6 @@ export async function POST(request: Request) {
       paymentReference,
       paymentStatus = "PENDING",
     } = parseResult.data;
-
-    const mappedPaymentMethod =
-      paymentMethod === "CASH"
-        ? "CASH"
-        : paymentMethod === "CREDIT_CARD" || paymentMethod === "DEBIT_CARD" || paymentMethod === "CARD"
-        ? "CREDIT_CARD"
-        : "UPI";
-
-    const mappedPaymentStatus = paymentStatus === "PAID" ? "PAID" : "PENDING";
 
     const resolvedIdempotencyKey =
       idempotencyKey ||
@@ -199,10 +192,26 @@ export async function POST(request: Request) {
       });
     }
 
-    // Standard tax calculation (CGST + SGST = 5%)
-    const taxRatePercent = DEFAULT_TAX_RATES.CGST + DEFAULT_TAX_RATES.SGST;
-    const calculatedTax = Math.round(((calculatedSubtotal * taxRatePercent) / 100) * 100) / 100;
-    const calculatedTotal = Math.round((calculatedSubtotal + calculatedTax) * 100) / 100;
+    // 4. Retrieve restaurant tax settings from PlatformSetting
+    let taxRatePercent = DEFAULT_TAX_RATES.CGST + DEFAULT_TAX_RATES.SGST;
+    const settingRecord = await prisma.platformSetting.findUnique({
+      where: { key: `settings_${qrRecord.businessId}` },
+    });
+    const savedTax = (settingRecord?.value as any)?.tax;
+    const paymentRequired = Boolean((settingRecord?.value as any)?.paymentGateway?.enabled) && isRazorpayConfigured();
+    const mappedPaymentMethod = paymentRequired ? "RAZORPAY" as const : "CASH" as const;
+    const mappedPaymentStatus = paymentRequired ? "PENDING" as const : "NOT_REQUIRED" as const;
+    if (savedTax !== undefined) {
+      const cgst = typeof savedTax?.cgst === "number" ? savedTax.cgst : (Number(savedTax?.cgst) || 0);
+      const sgst = typeof savedTax?.sgst === "number" ? savedTax.sgst : (Number(savedTax?.sgst) || 0);
+      taxRatePercent = Math.max(0, cgst + sgst);
+    }
+
+    const calculatedTax = taxRatePercent > 0
+      ? Math.round(((calculatedSubtotal * taxRatePercent) / 100) * 100) / 100
+      : 0;
+    const platformFee = await getPlatformFee(qrRecord.businessId);
+    const calculatedTotal = Math.round((calculatedSubtotal + calculatedTax + platformFee) * 100) / 100;
 
     const orderNumber = generateOrderNumber();
     const now = new Date();
@@ -221,7 +230,10 @@ export async function POST(request: Request) {
           items: processedOrderItems,
           subtotal: calculatedSubtotal,
           tax: calculatedTax,
+          serviceCharge: platformFee,
           total: calculatedTotal,
+          paymentStatus: mappedPaymentStatus,
+          paymentProvider: paymentRequired ? "razorpay" : null,
           notes: notes || null,
           idempotencyKey: resolvedIdempotencyKey,
           qrCodeId: qrRecord.id,
@@ -254,33 +266,21 @@ export async function POST(request: Request) {
           billNumber,
           subtotal: calculatedSubtotal,
           taxAmount: calculatedTax,
+          serviceCharge: platformFee,
           total: calculatedTotal,
           paymentMethod: mappedPaymentMethod,
           paymentStatus: mappedPaymentStatus,
-          paidAt: mappedPaymentStatus === "PAID" ? now : null,
-          notes: paymentReference ? `Payment Ref: ${paymentReference}` : null,
+          paidAt: null,
+          notes: null,
         },
       });
-
-      if (mappedPaymentStatus === "PAID") {
-        await tx.payment.create({
-          data: {
-            billId: bill.id,
-            restaurantId: qrRecord.businessId,
-            method: mappedPaymentMethod,
-            amount: calculatedTotal,
-            reference: paymentReference || `REF-${Date.now().toString().slice(-6)}`,
-            status: "PAID",
-          },
-        });
-      }
 
       // Record Order Status History
       await tx.orderStatusHistory.create({
         data: {
           orderId: order.id,
           status: "PENDING",
-          note: `Order submitted via ${qrRecord.type === "TABLE" ? "Table QR" : "Restaurant Menu QR"}. Payment: ${mappedPaymentMethod} (${mappedPaymentStatus}). Customer: ${customerName}`,
+          note: `Order submitted via ${qrRecord.type === "TABLE" ? "Table QR" : "Restaurant Menu QR"}. Customer: ${customerName}`,
         },
       });
 

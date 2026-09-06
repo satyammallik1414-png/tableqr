@@ -46,6 +46,24 @@ export async function POST(
 
     const now = new Date();
 
+    const readyTimestamp = existingOrder.estimatedReadyAt
+      ? new Date(existingOrder.estimatedReadyAt).getTime()
+      : existingOrder.acceptedAt && existingOrder.estimatedReadyMinutes
+      ? new Date(existingOrder.acceptedAt).getTime() + existingOrder.estimatedReadyMinutes * 60000
+      : null;
+
+    const isTimeFinished = readyTimestamp !== null && now.getTime() >= readyTimestamp;
+
+    if (existingOrder.status === "READY" || isTimeFinished) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Preparation time has completed and your order is ready. Cancellation is disabled.",
+        },
+        { status: 400 }
+      );
+    }
+
     const updatedOrder = await prisma.$transaction(async (tx) => {
       const order = await tx.order.update({
         where: { id: existingOrder.id },

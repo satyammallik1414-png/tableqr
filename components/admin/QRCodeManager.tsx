@@ -127,33 +127,48 @@ export function QRCodeManager({
   };
 
   const downloadPNG = () => {
-    const svg = qrRef.current?.querySelector("svg");
-    if (!svg) return;
+    try {
+      const svg = qrRef.current?.querySelector("svg");
+      if (!svg) return;
 
-    const svgData = new XMLSerializer().serializeToString(svg);
-    const canvas = document.createElement("canvas");
-    const ctx = canvas.getContext("2d");
-    const img = new Image();
+      const svgData = new XMLSerializer().serializeToString(svg);
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (typeof window === "undefined") return;
+      const img = new window.Image();
 
-    const canvasSize = 400;
-    canvas.width = canvasSize;
-    canvas.height = canvasSize;
+      const canvasSize = 400;
+      canvas.width = canvasSize;
+      canvas.height = canvasSize;
 
-    img.onload = () => {
-      if (ctx) {
-        ctx.fillStyle = "#ffffff";
-        ctx.fillRect(0, 0, canvasSize, canvasSize);
-        ctx.drawImage(img, 25, 25, 350, 350);
-      }
-      const pngUrl = canvas.toDataURL("image/png");
-      const link = document.createElement("a");
-      const title = type === "TABLE" ? tableName || "Table-QR" : "Menu-QR";
-      link.download = `${title.toLowerCase().replace(/\s+/g, "-")}.png`;
-      link.href = pngUrl;
-      link.click();
-    };
+      img.onerror = () => {
+        toast.error("Failed to generate QR image for download");
+      };
 
-    img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+      img.onload = () => {
+        try {
+          if (ctx) {
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvasSize, canvasSize);
+            ctx.drawImage(img, 25, 25, 350, 350);
+          }
+          const pngUrl = canvas.toDataURL("image/png");
+          const link = document.createElement("a");
+          const title = type === "TABLE" ? tableName || "Table-QR" : "Menu-QR";
+          link.download = `${title.toLowerCase().replace(/\s+/g, "-")}.png`;
+          link.href = pngUrl;
+          link.click();
+        } catch (exportErr) {
+          console.error("Export error:", exportErr);
+          toast.error("Failed to export PNG");
+        }
+      };
+
+      img.src = "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svgData)));
+    } catch (err) {
+      console.error("Download error:", err);
+      toast.error("Failed to process QR download");
+    }
   };
 
   const printQR = () => {

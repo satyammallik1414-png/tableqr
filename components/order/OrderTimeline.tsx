@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   Timer,
   Sparkles,
+  CreditCard,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -51,11 +52,7 @@ export function OrderTimeline({
     return () => clearInterval(timer);
   }, []);
 
-  const readyTimestamp = estimatedReadyAt
-    ? new Date(estimatedReadyAt).getTime()
-    : acceptedAt && estimatedReadyMinutes
-    ? new Date(acceptedAt).getTime() + estimatedReadyMinutes * 60000
-    : null;
+  const readyTimestamp = estimatedReadyAt ? new Date(estimatedReadyAt).getTime() : null;
 
   const acceptedTimestamp = acceptedAt ? new Date(acceptedAt).getTime() : null;
 
@@ -75,18 +72,21 @@ export function OrderTimeline({
     progressPercent = 100;
   }
 
-  // Determine current active step in timeline (0: Pending, 1: Preparing, 2: Your Order is Ready)
+  // Pending -> preparation countdown -> order completed.
   const getStepIndex = (currentStatus: string) => {
     switch (currentStatus) {
       case "PENDING":
         return 0;
+      case "ACCEPTED":
+        return 1;
       case "RECEIVED":
       case "PREPARING":
-        return isTimeCompleted ? 2 : 1;
+        return isTimeCompleted ? 3 : 2;
       case "READY":
       case "SERVED":
+        return 3;
       case "COMPLETED":
-        return 2;
+        return 3;
       default:
         return 0;
     }
@@ -100,6 +100,12 @@ export function OrderTimeline({
       label: "Pending",
       subtext: "Waiting for restaurant confirmation",
       icon: Clock,
+    },
+    {
+      id: "ACCEPTED",
+      label: "Accepted & Payment",
+      subtext: status === "ACCEPTED" ? "Please complete payment to start preparation" : "Payment confirmed before cooking starts",
+      icon: CreditCard,
     },
     {
       id: "PREPARING",
@@ -121,13 +127,13 @@ export function OrderTimeline({
       icon: ChefHat,
     },
     {
-      id: "READY",
-      label: "Your Order is Ready",
+      id: "COMPLETED",
+      label: "Order Completed",
       subtext:
         isTimeCompleted || status === "READY" || status === "SERVED" || status === "COMPLETED"
-          ? "Preparation completed! Your order is ready to enjoy."
-          : "Hot and fresh after preparation time finishes",
-      icon: BellRing,
+          ? "The preparation countdown has finished and your order is complete."
+          : "Completes automatically when the countdown finishes",
+      icon: CheckCircle2,
     },
   ];
 
@@ -283,7 +289,7 @@ export function OrderTimeline({
             </div>
           )}
 
-          {(status === "READY" || status === "SERVED" || status === "COMPLETED") && (
+          {(status === "READY" || status === "SERVED") && (
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50/90 p-4 shadow-xs">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-600 text-white font-bold shadow-xs shrink-0">
@@ -298,6 +304,15 @@ export function OrderTimeline({
               </div>
             </div>
           )}
+
+          {status === "COMPLETED" && (
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50/90 p-4 shadow-xs">
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-600 text-white shadow-xs"><CheckCircle2 className="h-5 w-5" /></div>
+                <div><h4 className="text-sm font-bold text-emerald-950">Order Completed</h4><p className="mt-0.5 text-xs text-emerald-700">The preparation countdown has finished successfully.</p></div>
+              </div>
+            </div>
+          )}
         </>
       )}
 
@@ -307,6 +322,7 @@ export function OrderTimeline({
           {steps.map((step, idx) => {
             const isCompleted = currentIndex > idx;
             const isCurrent = currentIndex === idx;
+            const isSuccessfulCurrent = isCurrent && step.id === "COMPLETED";
             const StepIcon = step.icon;
 
             return (
@@ -314,14 +330,14 @@ export function OrderTimeline({
                 {/* Node Icon */}
                 <div
                   className={`absolute -left-[31px] sm:-left-[35px] top-0 flex h-8 w-8 items-center justify-center rounded-full border-2 transition-all ${
-                    isCompleted || (isCurrent && step.id === "READY")
+                    isCompleted || isSuccessfulCurrent
                       ? "border-emerald-600 bg-emerald-600 text-white shadow-xs ring-4 ring-emerald-100"
                       : isCurrent
                       ? "border-slate-900 bg-white text-slate-900 ring-4 ring-blue-100 font-bold"
                       : "border-slate-300 bg-slate-100 text-slate-400"
                   }`}
                 >
-                  {isCompleted || (isCurrent && step.id === "READY") ? (
+                  {isCompleted || isSuccessfulCurrent ? (
                     <CheckCircle2 className="h-5 w-5" />
                   ) : (
                     <StepIcon className="h-4 w-4" />
@@ -333,7 +349,7 @@ export function OrderTimeline({
                   <div className="flex items-center gap-2">
                     <h4
                       className={`text-sm font-bold ${
-                        isCurrent && step.id === "READY"
+                        isSuccessfulCurrent
                           ? "text-emerald-700 font-extrabold"
                           : isCurrent
                           ? "text-slate-900"
@@ -347,12 +363,12 @@ export function OrderTimeline({
                     {isCurrent && (
                       <Badge
                         className={`${
-                          step.id === "READY"
+                          isSuccessfulCurrent
                             ? "bg-emerald-600 text-white"
                             : "bg-blue-600 text-white"
                         } text-[10px] px-2 py-0.5`}
                       >
-                        {step.id === "READY" ? "Ready" : "Current Status"}
+                        {step.id === "COMPLETED" ? "Complete" : "Current Status"}
                       </Badge>
                     )}
                   </div>

@@ -41,7 +41,7 @@ export function AcceptOrderDialog({
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          status: "PREPARING",
+          status: "ACCEPTED",
           estimatedReadyMinutes: prepMinutes,
         }),
       });
